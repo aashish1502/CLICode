@@ -7,6 +7,7 @@ import (
 
 	"github.com/aashish1502/clicode/internal/loader"
 	"github.com/aashish1502/clicode/internal/models"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,7 +23,7 @@ var (
 
 	activePane = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62"))
+			BorderForeground(lipgloss.Color("#eb650c"))
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196")).
@@ -31,19 +32,23 @@ var (
 
 type pane int
 
+// iota in go is a
 const (
 	problemPane pane = iota
 	editorPane
 )
 
 type model struct {
-	activePane pane
-	problem    *models.Problem
-	language   string
-	codeText   string
-	width      int
-	height     int
-	err        error
+	activePane         pane
+	problem            *models.Problem
+	language           string
+	codeText           string
+	width              int
+	height             int
+	problemDescription viewport.Model
+	codeEditor         viewport.Model
+	ready              bool
+	err                error
 }
 
 type errMsg struct{ err error }
@@ -57,6 +62,7 @@ func initialModel() model {
 	}
 
 	problem, err := loader.LoadProblem(110)
+
 	if err != nil {
 		m.err = err
 		return m
@@ -83,6 +89,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		paneWidth := (m.width / 2) - 4
+		paneHeight := m.height - 4
+
+		if !m.ready && m.err == nil {
+			m.problemDescription = viewport.New(0, 0)
+			m.codeEditor = viewport.New(0, 0)
+			m.ready = true
+
+			formattedProblem, err := m.problem.FormatProblemFromProblemStruct()
+			if err != nil {
+				// If formatting fails, show error in the problem pane
+				formattedProblem = fmt.Sprintf("Error formatting problem: %v", err)
+			}
+			m.problemDescription.SetContent(formattedProblem)
+			m.codeEditor.SetContent(m.codeText)
+		}
+
+		m.problemDescription.Height = paneHeight
+		m.problemDescription.Width = paneWidth
+
+		m.codeEditor.Height = paneHeight
+		m.codeEditor.Width = paneWidth
+
 		return m, nil
 
 	case errMsg:
@@ -105,17 +135,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "h":
+		case "h", "left":
 			if m.err == nil && m.activePane == editorPane {
 				m.activePane = problemPane
 			}
 			return m, nil
 
-		case "l":
+		case "l", "right":
 			if m.err == nil && m.activePane == problemPane {
 				m.activePane = editorPane
 			}
 			return m, nil
+
+		case "j", "down":
+			if m.activePane == problemPane {
+				m.problemDescription.LineDown(1)
+			} else {
+				m.codeEditor.LineDown(1)
+			}
+			return m, nil
+
+		case "k", "up":
+			if m.activePane == problemPane {
+				m.problemDescription.LineUp(1)
+			} else {
+				m.codeEditor.LineUp(1)
+			}
+			return m, nil
+
 		}
 	}
 
@@ -124,15 +171,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.width == 0 {
-		return "Loading..."
+		return "Loading... "
 	}
 
 	if m.err != nil {
 		return m.renderErrorView()
 	}
-
-	paneWidth := (m.width / 2) - 4
-	paneHeight := m.height - 5
 
 	problemStyle := borderStyle
 	editorStyle := borderStyle
@@ -144,23 +188,14 @@ func (m model) View() string {
 	}
 
 	// Handle error from FormatProblemFromProblemStruct
-	formattedProblem, err := m.problem.FormatProblemFromProblemStruct()
-	if err != nil {
-		// If formatting fails, show error in the problem pane
-		formattedProblem = fmt.Sprintf("Error formatting problem: %v", err)
-	}
 
 	problemView := problemStyle.
-		Width(paneWidth).
-		Height(paneHeight).
 		PaddingLeft(1).
-		Render(formattedProblem)
+		Render(m.problemDescription.View())
 
 	editorView := editorStyle.
-		Width(paneWidth).
-		Height(paneHeight).
 		PaddingLeft(1).
-		Render(m.codeText)
+		Render(m.codeEditor.View())
 
 	title := titleStyle.Render(fmt.Sprintf("CLICode - %s", m.language))
 
