@@ -7,6 +7,7 @@ import (
 
 	"github.com/aashish1502/clicode/internal/loader"
 	"github.com/aashish1502/clicode/internal/models"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,7 +33,9 @@ var (
 
 type pane int
 
-// iota in go is a
+// iota in go is a self incremeting variable in golang that is often used to
+// simulate an enum like condition
+
 const (
 	problemPane pane = iota
 	editorPane
@@ -46,7 +49,8 @@ type model struct {
 	width              int
 	height             int
 	problemDescription viewport.Model
-	codeEditor         viewport.Model
+	codeEditor         textarea.Model
+	editingMode        bool
 	ready              bool
 	err                error
 }
@@ -95,7 +99,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !m.ready && m.err == nil {
 			m.problemDescription = viewport.New(0, 0)
-			m.codeEditor = viewport.New(0, 0)
+			m.codeEditor = textarea.New()
 			m.ready = true
 
 			formattedProblem, err := m.problem.FormatProblemFromProblemStruct()
@@ -104,14 +108,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				formattedProblem = fmt.Sprintf("Error formatting problem: %v", err)
 			}
 			m.problemDescription.SetContent(formattedProblem)
-			m.codeEditor.SetContent(m.codeText)
+			m.codeEditor.SetValue(m.codeText)
 		}
 
 		m.problemDescription.Height = paneHeight
 		m.problemDescription.Width = paneWidth
-
-		m.codeEditor.Height = paneHeight
-		m.codeEditor.Width = paneWidth
+		m.codeEditor.SetHeight(paneHeight)
+		m.codeEditor.SetWidth(paneWidth)
 
 		return m, nil
 
@@ -120,6 +123,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+
+		if m.editingMode {
+
+			var cmd tea.Cmd
+
+			switch msg.String() {
+
+			case "esc":
+				m.editingMode = false
+				m.codeEditor.Blur()
+			default:
+				m.codeEditor, cmd = m.codeEditor.Update(msg)
+			}
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -149,17 +168,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "j", "down":
 			if m.activePane == problemPane {
-				m.problemDescription.LineDown(1)
+				m.problemDescription.ScrollDown(1)
 			} else {
-				m.codeEditor.LineDown(1)
+				m.codeEditor.CursorDown()
 			}
 			return m, nil
 
 		case "k", "up":
 			if m.activePane == problemPane {
-				m.problemDescription.LineUp(1)
+				m.problemDescription.ScrollUp(1)
 			} else {
-				m.codeEditor.LineUp(1)
+				m.codeEditor.CursorUp()
+			}
+			return m, nil
+
+		case "i":
+			if m.activePane == editorPane {
+				m.editingMode = true
+				m.codeEditor.Focus()
 			}
 			return m, nil
 
@@ -201,7 +227,7 @@ func (m model) View() string {
 
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("h/l: switch panes | ctrl+w: toggle | q: quit | :tc for test cases")
+		Render("h/l: switch | j/k: scroll | ctrl+w: toggle | q: quit | :tc for test cases")
 
 	content := lipgloss.JoinHorizontal(
 		lipgloss.Top,
