@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aashish1502/clicode/internal/loader"
 	"github.com/aashish1502/clicode/internal/models"
@@ -32,6 +33,7 @@ var (
 )
 
 type pane int
+type screen int
 
 // iota in go is a self incremeting variable in golang that is often used to
 // simulate an enum like condition
@@ -41,7 +43,15 @@ const (
 	editorPane
 )
 
-type model struct {
+const (
+	menuScreen screen = iota
+	problemScreen
+	testCaseScreen
+)
+
+const TabSpace = 4
+
+type problemScreenModel struct {
 	activePane         pane
 	problem            *models.Problem
 	language           string
@@ -55,12 +65,16 @@ type model struct {
 	err                error
 }
 
+type problemListModel struct {
+	problemList []models.ProblemListItem
+}
+
 type errMsg struct{ err error }
 
 func (e errMsg) Error() string { return e.err.Error() }
 
-func initialModel() model {
-	m := model{
+func initialModel() problemScreenModel {
+	m := problemScreenModel{
 		activePane: problemPane,
 		language:   "python",
 	}
@@ -84,11 +98,27 @@ func initialModel() model {
 	return m
 }
 
-func (m model) Init() tea.Cmd {
+func (m problemScreenModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func countLeadingSpace(line string) (int, error) {
+
+	indent := 0
+
+	for ch, _ := range line {
+		if ch == ' ' {
+			indent++
+		} else {
+			break
+		}
+	}
+
+	return indent, nil
+
+}
+
+func (m problemScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -130,6 +160,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch msg.String() {
 
+			case "tab":
+				m.codeEditor, cmd = m.codeEditor.Update(tea.KeyMsg{
+					Type:  tea.KeyRunes,
+					Runes: []rune(strings.Repeat(" ", TabSpace)),
+				})
 			case "esc":
 				m.editingMode = false
 				m.codeEditor.Blur()
@@ -195,7 +230,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m problemScreenModel) View() string {
 	if m.width == 0 {
 		return "Loading... "
 	}
@@ -243,7 +278,7 @@ func (m model) View() string {
 	)
 }
 
-func (m model) renderErrorView() string {
+func (m problemScreenModel) renderErrorView() string {
 	errorBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("196")).
