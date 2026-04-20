@@ -14,35 +14,58 @@ import (
 type tcPane int
 
 const (
-	tcListPane tcPane = iota
-	tcContentPane
+	tcCardsPane tcPane = iota
+	submissionsPane
 )
 
-// TestCaseScreen is a 2-viewport screen.
-// Left viewport: navigable list of test cases.
-// Right viewport: content of the selected test case.
-// Each TC's right-pane scroll offset is saved independently so switching TCs
-// never carries scroll state from one case to another.
+var (
+	cardBorder = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(0, 1)
+
+	cardLabel = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
+
+	submissionHeader = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("230"))
+
+	statusAccepted = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("82")).
+			Bold(true)
+
+	statusFailed = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
+
+	statusOther = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
+
+	subMeta = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241"))
+)
+
+// TestCaseScreen shows all test cases as scrollable cards on the left and
+// the submission history on the right.
 type TestCaseScreen struct {
-	problem         *models.Problem
-	cursor          int
-	activePane      tcPane
-	tcList          viewport.Model
-	tcContent       viewport.Model
-	tcScrollOffsets map[int]int
-	width           int
-	height          int
-	ready           bool
+	problem     *models.Problem
+	activePane  tcPane
+	tcViewport  viewport.Model
+	subViewport viewport.Model
+	width       int
+	height      int
+	ready       bool
 }
 
 func NewTestCaseScreen(problem *models.Problem, width, height int) TestCaseScreen {
 	s := TestCaseScreen{
-		problem:         problem,
-		cursor:          0,
-		activePane:      tcListPane,
-		tcScrollOffsets: make(map[int]int),
-		width:           width,
-		height:          height,
+		problem:    problem,
+		activePane: tcCardsPane,
+		width:      width,
+		height:     height,
 	}
 
 	if width > 0 && height > 0 && problem != nil {
@@ -52,68 +75,95 @@ func NewTestCaseScreen(problem *models.Problem, width, height int) TestCaseScree
 	return s
 }
 
-func (s TestCaseScreen) listWidth() int  { return (s.width / 3) - 4 }
-func (s TestCaseScreen) rightWidth() int { return (s.width * 2 / 3) - 4 }
+func (s TestCaseScreen) cardsWidth() int { return (s.width * 3 / 5) - 4 }
+func (s TestCaseScreen) subWidth() int   { return (s.width * 2 / 5) - 4 }
 func (s TestCaseScreen) paneHeight() int { return s.height - 4 }
 
 func (s TestCaseScreen) initViewports() TestCaseScreen {
-	s.tcList = viewport.New(s.listWidth(), s.paneHeight())
-	s.tcContent = viewport.New(s.rightWidth(), s.paneHeight())
-
-	s.tcList.SetContent(s.formatList())
-	if s.problem != nil && len(s.problem.TestCases) > 0 {
-		s.tcContent.SetContent(s.problem.FormatTestCase(s.cursor))
-	}
-
+	s.tcViewport = viewport.New(s.cardsWidth(), s.paneHeight())
+	s.subViewport = viewport.New(s.subWidth(), s.paneHeight())
+	s.tcViewport.SetContent(s.formatCards())
+	s.subViewport.SetContent(s.formatSubmissions())
 	s.ready = true
 	return s
 }
 
-// formatList builds the left-pane content string with a cursor indicator.
-func (s TestCaseScreen) formatList() string {
+func (s TestCaseScreen) formatCards() string {
 	if s.problem == nil || len(s.problem.TestCases) == 0 {
 		return "No test cases."
 	}
 
-	var sb strings.Builder
-	for i := range s.problem.TestCases {
-		if i == s.cursor {
-			sb.WriteString(design.ListCursor.Render(fmt.Sprintf("> TC %d", i+1)))
-		} else {
-			sb.WriteString(fmt.Sprintf("  TC %d", i+1))
-		}
-		sb.WriteString("\n")
+	// Card content width: viewport width minus border (2) and padding (2).
+	contentWidth := s.cardsWidth() - 4
+	if contentWidth < 10 {
+		contentWidth = 10
 	}
-	return sb.String()
+
+	style := cardBorder.Width(contentWidth)
+
+	var cards []string
+	for i, tc := range s.problem.TestCases {
+		title := design.Title.Render(fmt.Sprintf("Test Case %d", i+1))
+
+		input := lipgloss.JoinVertical(lipgloss.Left,
+			cardLabel.Render("Input"),
+			tc.Input,
+		)
+		expected := lipgloss.JoinVertical(lipgloss.Left,
+			cardLabel.Render("Expected"),
+			tc.ExpectedOutput,
+		)
+
+		body := lipgloss.JoinVertical(lipgloss.Left,
+			title, "", input, "", expected,
+		)
+
+		cards = append(cards, style.Render(body))
+	}
+
+	return strings.Join(cards, "\n\n")
 }
 
-// moveCursor saves the current right-pane scroll offset, moves the cursor, then
-// loads the new TC's content and restores its previously saved scroll position.
-func (s TestCaseScreen) moveCursor(newCursor int) TestCaseScreen {
-	if s.problem == nil {
-		return s
+func (s TestCaseScreen) formatSubmissions() string {
+	contentWidth := s.subWidth() - 4
+	if contentWidth < 8 {
+		contentWidth = 8
 	}
-	total := len(s.problem.TestCases)
-	if total == 0 || newCursor < 0 || newCursor >= total {
-		return s
-	}
+	divider := strings.Repeat("─", contentWidth)
 
-	// Save current TC's scroll offset.
-	s.tcScrollOffsets[s.cursor] = s.tcContent.YOffset
+	var lines []string
+	lines = append(lines, submissionHeader.Render("Submissions"))
+	lines = append(lines, divider)
 
-	s.cursor = newCursor
-
-	// Refresh left-pane list to show new cursor position.
-	s.tcList.SetContent(s.formatList())
-
-	// Load new TC content into right pane, then restore its saved offset.
-	s.tcContent.SetContent(s.problem.FormatTestCase(s.cursor))
-	s.tcContent.GotoTop()
-	if saved, ok := s.tcScrollOffsets[s.cursor]; ok && saved > 0 {
-		s.tcContent.ScrollDown(saved)
+	if s.problem == nil || len(s.problem.Submissions) == 0 {
+		lines = append(lines, subMeta.Render("No submissions yet."))
+		return strings.Join(lines, "\n")
 	}
 
-	return s
+	for _, sub := range s.problem.Submissions {
+		var statusStyle lipgloss.Style
+		var icon string
+		switch sub.Status {
+		case "Accepted":
+			statusStyle = statusAccepted
+			icon = "✓"
+		case "Wrong Answer":
+			statusStyle = statusFailed
+			icon = "✗"
+		default:
+			statusStyle = statusOther
+			icon = "⏱"
+		}
+
+		lines = append(lines,
+			statusStyle.Render(fmt.Sprintf("%s  %s", icon, sub.Status)),
+			subMeta.Render(fmt.Sprintf("   %s  ·  %s  ·  %s", sub.Language, sub.Runtime, sub.Memory)),
+			subMeta.Render(fmt.Sprintf("   %s", sub.Timestamp)),
+			"",
+		)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (s TestCaseScreen) Init() tea.Cmd { return nil }
@@ -126,10 +176,10 @@ func (s TestCaseScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.ready && s.problem != nil {
 			s = s.initViewports()
 		} else if s.ready {
-			s.tcList.Height = s.paneHeight()
-			s.tcList.Width = s.listWidth()
-			s.tcContent.Height = s.paneHeight()
-			s.tcContent.Width = s.rightWidth()
+			s.tcViewport.Width = s.cardsWidth()
+			s.tcViewport.Height = s.paneHeight()
+			s.subViewport.Width = s.subWidth()
+			s.subViewport.Height = s.paneHeight()
 		}
 		return s, nil
 
@@ -139,30 +189,30 @@ func (s TestCaseScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return s, func() tea.Msg { return NavigateBackMsg{} }
 
 		case "ctrl+w":
-			if s.activePane == tcListPane {
-				s.activePane = tcContentPane
+			if s.activePane == tcCardsPane {
+				s.activePane = submissionsPane
 			} else {
-				s.activePane = tcListPane
+				s.activePane = tcCardsPane
 			}
 
 		case "h", "left":
-			s.activePane = tcListPane
+			s.activePane = tcCardsPane
 
 		case "l", "right":
-			s.activePane = tcContentPane
+			s.activePane = submissionsPane
 
 		case "j", "down":
-			if s.activePane == tcListPane {
-				s = s.moveCursor(s.cursor + 1)
+			if s.activePane == tcCardsPane {
+				s.tcViewport.ScrollDown(1)
 			} else {
-				s.tcContent.ScrollDown(1)
+				s.subViewport.ScrollDown(1)
 			}
 
 		case "k", "up":
-			if s.activePane == tcListPane {
-				s = s.moveCursor(s.cursor - 1)
+			if s.activePane == tcCardsPane {
+				s.tcViewport.ScrollUp(1)
 			} else {
-				s.tcContent.ScrollUp(1)
+				s.subViewport.ScrollUp(1)
 			}
 		}
 	}
@@ -178,21 +228,21 @@ func (s TestCaseScreen) View() string {
 		return "Loading test cases..."
 	}
 
-	listStyle := design.Border
-	contentStyle := design.Border
-	if s.activePane == tcListPane {
-		listStyle = design.ActiveBorder
+	tcStyle := design.Border
+	subStyle := design.Border
+	if s.activePane == tcCardsPane {
+		tcStyle = design.ActiveBorder
 	} else {
-		contentStyle = design.ActiveBorder
+		subStyle = design.ActiveBorder
 	}
 
-	title := design.Title.Render("CLICode — Test Cases")
+	title := design.Title.Render("CLICode — Test Cases & Submissions")
 
-	listView := listStyle.PaddingLeft(1).Render(s.tcList.View())
-	contentView := contentStyle.PaddingLeft(1).Render(s.tcContent.View())
+	tcView := tcStyle.PaddingLeft(1).Render(s.tcViewport.View())
+	subView := subStyle.PaddingLeft(1).Render(s.subViewport.View())
 
-	panes := lipgloss.JoinHorizontal(lipgloss.Top, listView, contentView)
-	help := design.Help.Render("j/k: navigate TCs  h/l: switch pane  scroll: j/k in right pane  q/esc: back")
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, tcView, subView)
+	help := design.Help.Render("j/k: scroll  h/l: switch pane  ctrl+w: toggle  q/esc: back to problem")
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, panes, help)
 }
