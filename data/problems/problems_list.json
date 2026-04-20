@@ -138,5 +138,19 @@
     "date_solved": null,
     "review": true,
     "notes": "Use hashmap + doubly linked list."
+  },
+  {
+    "id": 110,
+    "title": "Balanced Binary Tree",
+    "difficulty": "Easy",
+    "tags": ["Tree", "DFS", "Recursion"],
+    "platform": "LeetCode",
+    "url": "https://leetcode.com/problems/balanced-binary-tree/",
+    "solved": false,
+    "attempts": 0,
+    "time_taken_minutes": 0,
+    "date_solved": null,
+    "review": false,
+    "notes": "Check height difference of subtrees recursively."
   }
 ]

@@ -62,13 +62,17 @@ func LoadProblem(id int) (*models.Problem, error) {
 
 func MakeProblemList() ([]models.ProblemListItem, error) {
 
-	filename := filepath.Join("data", "problem_list.json")
-	var err error = nil
+	filename := filepath.Join("data", "problems", "problems_list.json")
 
-	problemListByteDate, err := os.ReadFile(filename)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read problem list: %w", err)
+	}
 
 	var problems []models.ProblemListItem
-	err = json.Unmarshal(problemListByteDate, &problems)
+	if err := json.Unmarshal(data, &problems); err != nil {
+		return nil, fmt.Errorf("failed to parse problem list: %w", err)
+	}
 
-	return problems, err
+	return problems, nil
 }
