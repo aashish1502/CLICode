@@ -22,20 +22,46 @@
   "testCases": [
     {
       "input": "[3,9,20,null,null,15,7]",
-      "expected": "true"
+      "expectedOutput": "true"
     },
     {
       "input": "[1,2,2,3,3,null,null,4,4]",
-      "expected": "false"
+      "expectedOutput": "false"
     },
     {
       "input": "[]",
-      "expected": "true"
+      "expectedOutput": "true"
     }
   ],
   "codeStubs": {
     "python": "class Solution:\n    def isBalanced(self, root: Optional[TreeNode]) -> bool:\n        # Your code here\n        pass",
     "cpp": "class Solution {\npublic:\n    bool isBalanced(TreeNode* root) {\n        // Your code here\n    }\n};",
     "go": "func isBalanced(root *TreeNode) bool {\n    // Your code here\n}"
-  }
+  },
+  "submissions": [
+    {
+      "id": "sub-001",
+      "status": "Accepted",
+      "language": "python",
+      "timestamp": "2026-04-20T14:32:00Z",
+      "runtime": "42ms",
+      "memory": "16.3 MB"
+    },
+    {
+      "id": "sub-002",
+      "status": "Wrong Answer",
+      "language": "go",
+      "timestamp": "2026-04-19T09:15:00Z",
+      "runtime": "5ms",
+      "memory": "14.2 MB"
+    },
+    {
+      "id": "sub-003",
+      "status": "Time Limit Exceeded",
+      "language": "cpp",
+      "timestamp": "2026-04-18T22:07:00Z",
+      "runtime": "N/A",
+      "memory": "N/A"
+    }
+  ]
 }

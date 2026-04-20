@@ -16,6 +16,15 @@ type TestCase struct {
 	ExpectedOutput string `json:"expectedOutput"`
 }
 
+type Submission struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Language  string `json:"language"`
+	Timestamp string `json:"timestamp"`
+	Runtime   string `json:"runtime"`
+	Memory    string `json:"memory"`
+}
+
 type Problem struct {
 	ID          int               `json:"id"`
 	Title       string            `json:"title"`
@@ -27,6 +36,7 @@ type Problem struct {
 	Constraints []string          `json:"constraints"`
 	TestCases   []TestCase        `json:"testCases"`
 	CodeStubs   map[string]string `json:"codeStubs"`
+	Submissions []Submission      `json:"submissions"`
 }
 
 func (p *Problem) ValidateProblem() error {
@@ -76,6 +86,20 @@ func (p *Problem) FormatProblemFromProblemStruct() (string, error) {
 
 	return sb.String(), err
 
+}
+
+func (p *Problem) FormatTestCase(index int) string {
+	if index < 0 || index >= len(p.TestCases) {
+		return "No test case available."
+	}
+	tc := p.TestCases[index]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Test Case %d of %d\n\n", index+1, len(p.TestCases)))
+	sb.WriteString("Input:\n")
+	sb.WriteString(tc.Input + "\n\n")
+	sb.WriteString("Expected Output:\n")
+	sb.WriteString(tc.ExpectedOutput + "\n")
+	return sb.String()
 }
 
 func (p *Problem) GetCodeStub(language string) string {
