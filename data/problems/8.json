@@ -1,0 +1,38 @@
+{
+  "id": 8,
+  "title": "Course Schedule",
+  "difficulty": "Medium",
+  "platform": "LeetCode",
+  "tags": ["Graph", "Topological Sort", "DFS", "BFS"],
+  "description": "There are a total of numCourses courses you have to take, labeled from 0 to numCourses - 1. You are given an array prerequisites where prerequisites[i] = [ai, bi] indicates that you must take course bi first if you want to take course ai.\n\nReturn true if you can finish all courses. Otherwise, return false.\n\nThis problem reduces to detecting a cycle in a directed graph.",
+  "examples": [
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0]]",
+      "output": "true",
+      "explanation": "Take course 0 first, then course 1."
+    },
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0],[0,1]]",
+      "output": "false",
+      "explanation": "Courses 0 and 1 are mutually dependent — impossible to finish."
+    }
+  ],
+  "constraints": [
+    "1 <= numCourses <= 2000",
+    "0 <= prerequisites.length <= 5000",
+    "prerequisites[i].length == 2",
+    "0 <= ai, bi < numCourses",
+    "All the pairs prerequisites[i] are unique."
+  ],
+  "testCases": [
+    { "input": "2\n[[1,0]]", "expectedOutput": "true" },
+    { "input": "2\n[[1,0],[0,1]]", "expectedOutput": "false" },
+    { "input": "1\n[]", "expectedOutput": "true" }
+  ],
+  "codeStubs": {
+    "python": "class Solution:\n    def canFinish(self, numCourses: int, prerequisites: List[List[int]]) -> bool:\n        # Your code here\n        pass",
+    "cpp": "class Solution {\npublic:\n    bool canFinish(int numCourses, vector<vector<int>>& prerequisites) {\n        // Your code here\n    }\n};",
+    "go": "func canFinish(numCourses int, prerequisites [][]int) bool {\n    // Your code here\n}"
+  },
+  "submissions": []
+}

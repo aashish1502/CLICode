@@ -1,0 +1,41 @@
+{
+  "id": 3,
+  "title": "Longest Substring Without Repeating Characters",
+  "difficulty": "Medium",
+  "platform": "LeetCode",
+  "tags": ["Sliding Window", "Hash Table", "String"],
+  "description": "Given a string s, find the length of the longest substring without repeating characters.",
+  "examples": [
+    {
+      "input": "s = \"abcabcbb\"",
+      "output": "3",
+      "explanation": "The answer is \"abc\", with the length of 3."
+    },
+    {
+      "input": "s = \"bbbbb\"",
+      "output": "1",
+      "explanation": "The answer is \"b\", with the length of 1."
+    },
+    {
+      "input": "s = \"pwwkew\"",
+      "output": "3",
+      "explanation": "The answer is \"wke\", with the length of 3."
+    }
+  ],
+  "constraints": [
+    "0 <= s.length <= 5 * 10^4",
+    "s consists of English letters, digits, symbols and spaces."
+  ],
+  "testCases": [
+    { "input": "abcabcbb", "expectedOutput": "3" },
+    { "input": "bbbbb", "expectedOutput": "1" },
+    { "input": "pwwkew", "expectedOutput": "3" },
+    { "input": "", "expectedOutput": "0" }
+  ],
+  "codeStubs": {
+    "python": "class Solution:\n    def lengthOfLongestSubstring(self, s: str) -> int:\n        # Your code here\n        pass",
+    "cpp": "class Solution {\npublic:\n    int lengthOfLongestSubstring(string s) {\n        // Your code here\n    }\n};",
+    "go": "func lengthOfLongestSubstring(s string) int {\n    // Your code here\n}"
+  },
+  "submissions": []
+}
