@@ -1,7 +1,9 @@
 package screens
 
 import (
+	"github.com/aashish1502/clicode/internal/config"
 	"github.com/aashish1502/clicode/internal/loader"
+	"github.com/aashish1502/clicode/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -23,18 +25,24 @@ type Router struct {
 	current       screenID
 	screens       map[screenID]tea.Model
 	lastProblemID int
+	cfg           config.Config
 	width         int
 	height        int
 }
 
 func NewRouter() Router {
+	sess, _ := session.Load()
+	cfg, _ := config.Load()
+
 	r := Router{
-		current: titleScreenID,
-		screens: make(map[screenID]tea.Model),
+		current:       titleScreenID,
+		screens:       make(map[screenID]tea.Model),
+		lastProblemID: sess.LastProblemID,
+		cfg:           cfg,
 	}
 	r.screens[titleScreenID] = NewTitleScreen(0, 0)
-	r.screens[menuScreenID] = NewMenuScreen(0, 0, 0)
-	r.screens[listScreenID] = NewProblemListScreen(0, 0, 0)
+	r.screens[menuScreenID] = NewMenuScreen(r.lastProblemID, 0, 0)
+	r.screens[listScreenID] = NewProblemListScreen(r.lastProblemID, 0, 0)
 	return r
 }
 
@@ -49,8 +57,9 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NavigateToProblemMsg:
 		r.lastProblemID = m.ProblemID
+		_ = session.Save(session.Session{LastProblemID: r.lastProblemID})
 		problem, err := loader.LoadProblem(m.ProblemID)
-		ps := NewProblemScreen(problem, err, r.width, r.height)
+		ps := NewProblemScreen(problem, err, r.width, r.height, r.cfg.DefaultLanguage)
 		r.screens[problemScreenID] = ps
 		r.current = problemScreenID
 		return r, ps.Init()

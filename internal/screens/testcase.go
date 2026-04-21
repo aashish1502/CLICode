@@ -6,6 +6,7 @@ import (
 
 	"github.com/aashish1502/clicode/internal/design"
 	"github.com/aashish1502/clicode/internal/models"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,11 +19,24 @@ const (
 	submissionsPane
 )
 
+// editField tracks which textarea is active during TC edit mode.
+type editField int
+
+const (
+	editInput    editField = iota
+	editExpected           // nolint:deadcode,varcheck
+)
+
 var (
 	cardBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
 			Padding(0, 1)
+
+	cardBorderSelected = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#eb650c")).
+				Padding(0, 1)
 
 	cardLabel = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("39")).
@@ -48,22 +62,32 @@ var (
 		Foreground(lipgloss.Color("241"))
 )
 
-// TestCaseScreen shows all test cases as scrollable cards on the left and
-// the submission history on the right.
+// TestCaseScreen shows test cases as scrollable cards on the left (with a
+// cursor and inline edit mode) and submission history on the right.
 type TestCaseScreen struct {
 	problem     *models.Problem
 	activePane  tcPane
 	tcViewport  viewport.Model
 	subViewport viewport.Model
-	width       int
-	height      int
-	ready       bool
+
+	// cursor / edit state
+	selectedTC     int
+	editMode       bool
+	activeField    editField
+	inputEditor    textarea.Model
+	expectedEditor textarea.Model
+	tcEdits        map[int][2]string // local overrides: index → [input, expected]
+
+	width  int
+	height int
+	ready  bool
 }
 
 func NewTestCaseScreen(problem *models.Problem, width, height int) TestCaseScreen {
 	s := TestCaseScreen{
 		problem:    problem,
 		activePane: tcCardsPane,
+		tcEdits:    make(map[int][2]string),
 		width:      width,
 		height:     height,
 	}
@@ -88,30 +112,59 @@ func (s TestCaseScreen) initViewports() TestCaseScreen {
 	return s
 }
 
+// tcInput returns the (possibly edited) input for the given TC index.
+func (s TestCaseScreen) tcInput(i int) string {
+	if edit, ok := s.tcEdits[i]; ok {
+		return edit[0]
+	}
+	if s.problem == nil || i >= len(s.problem.TestCases) {
+		return ""
+	}
+	return s.problem.TestCases[i].Input
+}
+
+// tcExpected returns the (possibly edited) expected output for the given TC index.
+func (s TestCaseScreen) tcExpected(i int) string {
+	if edit, ok := s.tcEdits[i]; ok {
+		return edit[1]
+	}
+	if s.problem == nil || i >= len(s.problem.TestCases) {
+		return ""
+	}
+	return s.problem.TestCases[i].ExpectedOutput
+}
+
 func (s TestCaseScreen) formatCards() string {
 	if s.problem == nil || len(s.problem.TestCases) == 0 {
 		return "No test cases."
 	}
 
-	// Card content width: viewport width minus border (2) and padding (2).
 	contentWidth := s.cardsWidth() - 4
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
 
-	style := cardBorder.Width(contentWidth)
-
 	var cards []string
-	for i, tc := range s.problem.TestCases {
-		title := design.Title.Render(fmt.Sprintf("Test Case %d", i+1))
+	for i := range s.problem.TestCases {
+		style := cardBorder.Width(contentWidth)
+		if i == s.selectedTC {
+			style = cardBorderSelected.Width(contentWidth)
+		}
+
+		cursor := "  "
+		if i == s.selectedTC {
+			cursor = "▶ "
+		}
+
+		title := design.Title.Render(fmt.Sprintf("%sTest Case %d", cursor, i+1))
 
 		input := lipgloss.JoinVertical(lipgloss.Left,
 			cardLabel.Render("Input"),
-			tc.Input,
+			s.tcInput(i),
 		)
 		expected := lipgloss.JoinVertical(lipgloss.Left,
 			cardLabel.Render("Expected"),
-			tc.ExpectedOutput,
+			s.tcExpected(i),
 		)
 
 		body := lipgloss.JoinVertical(lipgloss.Left,
@@ -166,6 +219,44 @@ func (s TestCaseScreen) formatSubmissions() string {
 	return strings.Join(lines, "\n")
 }
 
+// enterEditMode initialises the two textareas for the currently selected TC.
+func (s TestCaseScreen) enterEditMode() TestCaseScreen {
+	editorWidth := s.cardsWidth() - 6
+	editorHeight := (s.paneHeight() / 2) - 4
+	if editorHeight < 3 {
+		editorHeight = 3
+	}
+
+	s.inputEditor = textarea.New()
+	s.inputEditor.SetWidth(editorWidth)
+	s.inputEditor.SetHeight(editorHeight)
+	s.inputEditor.SetValue(s.tcInput(s.selectedTC))
+	s.inputEditor.Focus()
+
+	s.expectedEditor = textarea.New()
+	s.expectedEditor.SetWidth(editorWidth)
+	s.expectedEditor.SetHeight(editorHeight)
+	s.expectedEditor.SetValue(s.tcExpected(s.selectedTC))
+	s.expectedEditor.Blur()
+
+	s.activeField = editInput
+	s.editMode = true
+	return s
+}
+
+// saveAndExitEdit persists textarea values back into tcEdits and returns to card view.
+func (s TestCaseScreen) saveAndExitEdit() TestCaseScreen {
+	s.tcEdits[s.selectedTC] = [2]string{
+		s.inputEditor.Value(),
+		s.expectedEditor.Value(),
+	}
+	s.editMode = false
+	s.inputEditor.Blur()
+	s.expectedEditor.Blur()
+	s.tcViewport.SetContent(s.formatCards())
+	return s
+}
+
 func (s TestCaseScreen) Init() tea.Cmd { return nil }
 
 func (s TestCaseScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -184,6 +275,38 @@ func (s TestCaseScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, nil
 
 	case tea.KeyMsg:
+		// ── Edit mode ────────────────────────────────────────────────────────
+		if s.editMode {
+			switch msg.String() {
+			case "esc":
+				s = s.saveAndExitEdit()
+				return s, nil
+
+			case "tab":
+				// switch between input and expected fields
+				if s.activeField == editInput {
+					s.inputEditor.Blur()
+					s.expectedEditor.Focus()
+					s.activeField = editExpected
+				} else {
+					s.expectedEditor.Blur()
+					s.inputEditor.Focus()
+					s.activeField = editInput
+				}
+				return s, nil
+			}
+
+			// forward keystrokes to the active textarea
+			var cmd tea.Cmd
+			if s.activeField == editInput {
+				s.inputEditor, cmd = s.inputEditor.Update(msg)
+			} else {
+				s.expectedEditor, cmd = s.expectedEditor.Update(msg)
+			}
+			return s, cmd
+		}
+
+		// ── Normal mode ──────────────────────────────────────────────────────
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			return s, func() tea.Msg { return NavigateBackMsg{} }
@@ -201,16 +324,28 @@ func (s TestCaseScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "l", "right":
 			s.activePane = submissionsPane
 
+		case "i", "enter":
+			if s.activePane == tcCardsPane && s.problem != nil && len(s.problem.TestCases) > 0 {
+				s = s.enterEditMode()
+				return s, nil
+			}
+
 		case "j", "down":
 			if s.activePane == tcCardsPane {
-				s.tcViewport.ScrollDown(1)
+				if s.problem != nil && s.selectedTC < len(s.problem.TestCases)-1 {
+					s.selectedTC++
+					s.tcViewport.SetContent(s.formatCards())
+				}
 			} else {
 				s.subViewport.ScrollDown(1)
 			}
 
 		case "k", "up":
 			if s.activePane == tcCardsPane {
-				s.tcViewport.ScrollUp(1)
+				if s.selectedTC > 0 {
+					s.selectedTC--
+					s.tcViewport.SetContent(s.formatCards())
+				}
 			} else {
 				s.subViewport.ScrollUp(1)
 			}
@@ -238,11 +373,35 @@ func (s TestCaseScreen) View() string {
 
 	title := design.Title.Render("CLICode — Test Cases & Submissions")
 
-	tcView := tcStyle.PaddingLeft(1).Render(s.tcViewport.View())
+	var leftContent string
+	if s.editMode {
+		inputLabel := cardLabel.Render("Input")
+		expectedLabel := cardLabel.Render("Expected")
+		if s.activeField == editInput {
+			inputLabel = design.ActiveBorder.Render(cardLabel.Render("Input ✎"))
+		} else {
+			expectedLabel = design.ActiveBorder.Render(cardLabel.Render("Expected ✎"))
+		}
+		leftContent = lipgloss.JoinVertical(lipgloss.Left,
+			design.Title.Render(fmt.Sprintf("Editing Test Case %d", s.selectedTC+1)),
+			"",
+			inputLabel,
+			s.inputEditor.View(),
+			"",
+			expectedLabel,
+			s.expectedEditor.View(),
+			"",
+			design.Help.Render("Tab: switch field  Esc: save & back"),
+		)
+	} else {
+		leftContent = s.tcViewport.View()
+	}
+
+	tcView := tcStyle.PaddingLeft(1).Render(leftContent)
 	subView := subStyle.PaddingLeft(1).Render(s.subViewport.View())
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, tcView, subView)
-	help := design.Help.Render("j/k: scroll  h/l: switch pane  ctrl+w: toggle  q/esc: back to problem")
+	help := design.Help.Render("j/k: navigate  i/Enter: edit  h/l: switch pane  q/esc: back")
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, panes, help)
 }

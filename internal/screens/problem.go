@@ -34,10 +34,13 @@ type ProblemScreen struct {
 	err                error
 }
 
-func NewProblemScreen(problem *models.Problem, err error, width, height int) ProblemScreen {
+func NewProblemScreen(problem *models.Problem, err error, width, height int, language string) ProblemScreen {
+	if language == "" {
+		language = "python"
+	}
 	s := ProblemScreen{
 		activePane: problemPane,
-		language:   "python",
+		language:   language,
 		width:      width,
 		height:     height,
 		err:        err,
