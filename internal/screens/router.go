@@ -9,9 +9,11 @@ type screenID int
 
 const (
 	titleScreenID screenID = iota
+	menuScreenID
 	listScreenID
 	problemScreenID
 	tcScreenID
+	settingsScreenID
 )
 
 // Router is the top-level tea.Model. It owns all screens and routes messages
@@ -31,6 +33,7 @@ func NewRouter() Router {
 		screens: make(map[screenID]tea.Model),
 	}
 	r.screens[titleScreenID] = NewTitleScreen(0, 0)
+	r.screens[menuScreenID] = NewMenuScreen(0, 0, 0)
 	r.screens[listScreenID] = NewProblemListScreen(0, 0, 0)
 	return r
 }
@@ -59,13 +62,20 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, tc.Init()
 
 	case NavigateBackMsg:
-		// TC → problem; problem → list (handled via "m" key in problem.go)
+		// TC → problem screen (state preserved).
 		if r.screens[problemScreenID] != nil {
 			r.current = problemScreenID
 		} else {
-			r.current = listScreenID
+			r.current = menuScreenID
 		}
 		return r, nil
+
+	case NavigateToMenuMsg:
+		// Rebuild the menu so the last-worked-on indicator is fresh.
+		menu := NewMenuScreen(r.lastProblemID, r.width, r.height)
+		r.screens[menuScreenID] = menu
+		r.current = menuScreenID
+		return r, menu.Init()
 
 	case NavigateToProblemListMsg:
 		// Rebuild the list so the last-worked-on indicator is fresh.
@@ -73,6 +83,11 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		r.screens[listScreenID] = list
 		r.current = listScreenID
 		return r, list.Init()
+
+	case NavigateToSettingsMsg:
+		r.screens[settingsScreenID] = NewSettingsScreen(r.width, r.height)
+		r.current = settingsScreenID
+		return r, nil
 
 	// ── Window resize: propagate to all initialised screens ──────────────────
 

@@ -120,7 +120,7 @@ func (s ProblemScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return s, tea.Quit
 
 		case "m":
-			return s, func() tea.Msg { return NavigateToProblemListMsg{} }
+			return s, func() tea.Msg { return NavigateToMenuMsg{} }
 
 		case "t":
 			if s.problem != nil {

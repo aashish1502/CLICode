@@ -13,3 +13,9 @@ type NavigateToTestCaseMsg struct{ Problem *models.Problem }
 
 // NavigateBackMsg returns to the previous logical screen (TC → problem, problem → list).
 type NavigateBackMsg struct{}
+
+// NavigateToMenuMsg shows the main menu.
+type NavigateToMenuMsg struct{}
+
+// NavigateToSettingsMsg shows the settings screen.
+type NavigateToSettingsMsg struct{}

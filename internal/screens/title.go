@@ -79,9 +79,9 @@ func (s TitleScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.height = m.Height
 		return s, nil
 
-	// Timer expired or any key pressed — move to the problem list.
+	// Timer expired or any key pressed — move to the main menu.
 	case titleTickMsg, tea.KeyMsg:
-		return s, func() tea.Msg { return NavigateToProblemListMsg{} }
+		return s, func() tea.Msg { return NavigateToMenuMsg{} }
 	}
 	return s, nil
 }
