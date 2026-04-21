@@ -8,7 +8,8 @@ import (
 type screenID int
 
 const (
-	listScreenID screenID = iota
+	titleScreenID screenID = iota
+	listScreenID
 	problemScreenID
 	tcScreenID
 )
@@ -26,9 +27,10 @@ type Router struct {
 
 func NewRouter() Router {
 	r := Router{
-		current: listScreenID,
+		current: titleScreenID,
 		screens: make(map[screenID]tea.Model),
 	}
+	r.screens[titleScreenID] = NewTitleScreen(0, 0)
 	r.screens[listScreenID] = NewProblemListScreen(0, 0, 0)
 	return r
 }
