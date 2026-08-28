@@ -9,12 +9,20 @@ import (
 type Config struct {
 	DefaultLanguage string `json:"defaultLanguage"`
 	AuthToken       string `json:"authToken"`
+
+	// Languages is the set the editor lets you write in, by canonical id
+	// ("python", "kotlin"). It is a property of the judge, not of any one
+	// problem, so it is deliberately independent of which languages ship
+	// starter code. Empty means languages.DefaultIDs(); the server's
+	// capabilities response will supply it once the API exists.
+	Languages []string `json:"languages"`
 }
 
 func Default() Config {
 	return Config{
 		DefaultLanguage: "python",
 		AuthToken:       "",
+		Languages:       nil,
 	}
 }
 

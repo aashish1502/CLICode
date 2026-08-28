@@ -2,10 +2,11 @@ package loader
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
 
+	"github.com/aashish1502/clicode/data"
 	"github.com/aashish1502/clicode/internal/models"
 )
 
@@ -28,28 +29,26 @@ func (e *InvalidProblemDataError) Error() string {
 	return fmt.Sprintf("invalid problem data for %d: %s", e.ID, e.Reason)
 }
 
-// LoadProblem loads a problem from JSON file
+// LoadProblem reads one problem from the embedded seed set.
 func LoadProblem(id int) (*models.Problem, error) {
 	if id <= 0 {
 		return nil, fmt.Errorf("invalid problem ID: %d", id)
 	}
 
-	filename := filepath.Join("data", "problems", fmt.Sprintf("%d.json", id))
+	filename := fmt.Sprintf("%d.json", id)
 
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-
-		// we use & to get the mem address of an object here we are creating the error obj
-		// and passing its address to the caller
-		return nil, &ProblemNotFoundError{ID: id}
-	}
-
-	data, err := os.ReadFile(filename)
+	raw, err := fs.ReadFile(data.Problems(), filename)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// we use & to get the mem address of an object here we are creating the error obj
+			// and passing its address to the caller
+			return nil, &ProblemNotFoundError{ID: id}
+		}
 		return nil, fmt.Errorf("failed to read problem file %s: %w", filename, err)
 	}
 
 	var problem models.Problem
-	if err := json.Unmarshal(data, &problem); err != nil {
+	if err := json.Unmarshal(raw, &problem); err != nil {
 		return nil, fmt.Errorf("failed to parse problem JSON for %d: %w", id, err)
 	}
 
@@ -60,17 +59,15 @@ func LoadProblem(id int) (*models.Problem, error) {
 	return &problem, nil
 }
 
+// MakeProblemList reads the problem index from the embedded seed set.
 func MakeProblemList() ([]models.ProblemListItem, error) {
-
-	filename := filepath.Join("data", "problems", "problems_list.json")
-
-	data, err := os.ReadFile(filename)
+	raw, err := fs.ReadFile(data.Problems(), "problems_list.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read problem list: %w", err)
 	}
 
 	var problems []models.ProblemListItem
-	if err := json.Unmarshal(data, &problems); err != nil {
+	if err := json.Unmarshal(raw, &problems); err != nil {
 		return nil, fmt.Errorf("failed to parse problem list: %w", err)
 	}
 

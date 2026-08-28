@@ -28,5 +28,8 @@ go.work.sum
 .env
 .claude
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# Runtime artifacts
+clicode.log

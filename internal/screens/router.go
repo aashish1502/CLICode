@@ -1,7 +1,12 @@
 package screens
 
 import (
+	"context"
+	"log"
+	"strconv"
+
 	"github.com/aashish1502/clicode/internal/config"
+	"github.com/aashish1502/clicode/internal/languages"
 	"github.com/aashish1502/clicode/internal/loader"
 	"github.com/aashish1502/clicode/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,114 +23,160 @@ const (
 	settingsScreenID
 )
 
-// Router is the top-level tea.Model. It owns all screens and routes messages
-// between them. Each screen is stored so state (code editor content, scroll
-// positions) survives navigation away and back.
+// refresher is implemented by screens whose displayed data can go stale while
+// they sit lower in the stack or in the cache — the menu's last-worked-on
+// marker, for instance. The router calls Refresh when the screen becomes
+// visible again, so the screen keeps its cursor while its data catches up.
+type refresher interface {
+	Refresh(lastProblemID int) tea.Model
+}
+
+// Router is the top-level tea.Model. It owns the screen stack and translates
+// navigation messages into pushes and pops.
+//
+// Navigation is a stack rather than a set of hardcoded transitions: every screen
+// knows how to say "go back" without knowing what is behind it, and the app's
+// lifecycle is exactly the stack's — when the last screen pops, the app exits.
 type Router struct {
-	current       screenID
-	screens       map[screenID]tea.Model
+	stack         stack
 	lastProblemID int
 	cfg           config.Config
 	width         int
 	height        int
+
+	// supported is the set of languages the editor may open a buffer in,
+	// resolved once at startup. It is static today; when the API supplies it
+	// this becomes a refreshable snapshot rather than a constant.
+	supported []languages.Language
 }
 
 func NewRouter() Router {
 	sess, _ := session.Load()
 	cfg, _ := config.Load()
 
+	supported, err := languages.NewStatic(cfg.Languages).Supported(context.Background())
+	if err != nil {
+		// A static catalog cannot fail; an API-backed one can, and when it
+		// does the editor still needs something to open.
+		log.Printf("language catalog unavailable, falling back to defaults: %v", err)
+		supported, _ = languages.NewStatic(nil).Supported(context.Background())
+	}
+
 	r := Router{
-		current:       titleScreenID,
-		screens:       make(map[screenID]tea.Model),
 		lastProblemID: sess.LastProblemID,
 		cfg:           cfg,
+		supported:     supported,
 	}
-	r.screens[titleScreenID] = NewTitleScreen(0, 0)
-	r.screens[menuScreenID] = NewMenuScreen(r.lastProblemID, 0, 0)
-	r.screens[listScreenID] = NewProblemListScreen(r.lastProblemID, 0, 0)
+	r.stack.reset(Key{ID: titleScreenID}, NewTitleScreen(0, 0))
 	return r
 }
 
 func (r Router) Init() tea.Cmd {
-	return r.screens[r.current].Init()
+	if m, ok := r.stack.current(); ok {
+		return m.Init()
+	}
+	return nil
 }
 
 func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 
-	// ── Navigation ────────────────────────────────────────────────────────────
+	case tea.KeyMsg:
+		// Hard quit. Deliberately global and handled before anything else, so
+		// it still works if a screen stops responding to everything else.
+		if m.String() == "ctrl+q" {
+			return r, tea.Quit
+		}
+
+	// ── Window resize: every screen on the stack, not just the visible one ────
+
+	case tea.WindowSizeMsg:
+		r.width, r.height = m.Width, m.Height
+		return r, r.stack.broadcast(m)
+
+	// ── Navigation ───────────────────────────────────────────────────────────
+
+	case NavigateToMenuMsg:
+		// Root: the menu is the bottom of the stack, so reaching it from any
+		// depth collapses back to a single frame rather than stacking copies.
+		return r.navigate(Key{ID: menuScreenID}, Root, func() tea.Model {
+			return NewMenuScreen(r.lastProblemID, r.width, r.height)
+		})
+
+	case NavigateToProblemListMsg:
+		return r.navigate(Key{ID: listScreenID}, Single, func() tea.Model {
+			return NewProblemListScreen(r.lastProblemID, r.width, r.height)
+		})
 
 	case NavigateToProblemMsg:
 		r.lastProblemID = m.ProblemID
 		_ = session.Save(session.Session{LastProblemID: r.lastProblemID})
-		problem, err := loader.LoadProblem(m.ProblemID)
-		ps := NewProblemScreen(problem, err, r.width, r.height, r.cfg.DefaultLanguage)
-		r.screens[problemScreenID] = ps
-		r.current = problemScreenID
-		return r, ps.Init()
+
+		id := m.ProblemID
+		return r.navigate(Key{ID: problemScreenID, Arg: strconv.Itoa(id)}, Single, func() tea.Model {
+			problem, err := loader.LoadProblem(id)
+			return NewProblemScreen(problem, err, r.width, r.height, r.cfg.DefaultLanguage, r.supported)
+		})
 
 	case NavigateToTestCaseMsg:
-		tc := NewTestCaseScreen(m.Problem, r.width, r.height)
-		r.screens[tcScreenID] = tc
-		r.current = tcScreenID
-		return r, tc.Init()
-
-	case NavigateBackMsg:
-		// TC → problem screen (state preserved).
-		if r.screens[problemScreenID] != nil {
-			r.current = problemScreenID
-		} else {
-			r.current = menuScreenID
-		}
-		return r, nil
-
-	case NavigateToMenuMsg:
-		// Rebuild the menu so the last-worked-on indicator is fresh.
-		menu := NewMenuScreen(r.lastProblemID, r.width, r.height)
-		r.screens[menuScreenID] = menu
-		r.current = menuScreenID
-		return r, menu.Init()
-
-	case NavigateToProblemListMsg:
-		// Rebuild the list so the last-worked-on indicator is fresh.
-		list := NewProblemListScreen(r.lastProblemID, r.width, r.height)
-		r.screens[listScreenID] = list
-		r.current = listScreenID
-		return r, list.Init()
+		p := m.Problem
+		return r.navigate(Key{ID: tcScreenID, Arg: strconv.Itoa(p.ID)}, Single, func() tea.Model {
+			return NewTestCaseScreen(p, r.width, r.height)
+		})
 
 	case NavigateToSettingsMsg:
-		r.screens[settingsScreenID] = NewSettingsScreen(r.width, r.height)
-		r.current = settingsScreenID
-		return r, nil
+		return r.navigate(Key{ID: settingsScreenID}, Single, func() tea.Model {
+			return NewSettingsScreen(r.width, r.height)
+		})
 
-	// ── Window resize: propagate to all initialised screens ──────────────────
-
-	case tea.WindowSizeMsg:
-		r.width = m.Width
-		r.height = m.Height
-		var cmds []tea.Cmd
-		for id, s := range r.screens {
-			updated, cmd := s.Update(m)
-			r.screens[id] = updated
-			cmds = append(cmds, cmd)
+	case NavigateBackMsg:
+		cmd, ok := r.stack.pop()
+		if !ok {
+			// Nothing left behind this screen — the app's lifecycle is the
+			// stack's, so an empty stack means we're done.
+			return r, tea.Quit
 		}
-		return r, tea.Batch(cmds...)
-	}
-
-	// ── Delegate to the active screen ─────────────────────────────────────────
-
-	if s, ok := r.screens[r.current]; ok {
-		updated, cmd := s.Update(msg)
-		r.screens[r.current] = updated
+		r.reveal()
 		return r, cmd
 	}
 
+	// ── Delegate to the visible screen ───────────────────────────────────────
+
+	if m, ok := r.stack.current(); ok {
+		updated, cmd := m.Update(msg)
+		r.stack.replaceCurrent(updated)
+		return r, cmd
+	}
 	return r, nil
 }
 
 func (r Router) View() string {
-	if s, ok := r.screens[r.current]; ok {
-		return s.View()
+	if m, ok := r.stack.current(); ok {
+		return m.View()
 	}
 	return "Loading..."
+}
+
+// navigate pushes a screen and brings it up to date before it is drawn.
+func (r Router) navigate(k Key, mode Mode, build func() tea.Model) (tea.Model, tea.Cmd) {
+	cmd := r.stack.push(k, mode, build)
+	r.reveal()
+	return r, cmd
+}
+
+// reveal prepares the now-visible screen: refreshes data that may have gone
+// stale while it was hidden, and hands it the current terminal size, which it
+// will have missed if it was restored from the cache after a resize.
+func (r *Router) reveal() {
+	m, ok := r.stack.current()
+	if !ok {
+		return
+	}
+	if ref, isRefresher := m.(refresher); isRefresher {
+		m = ref.Refresh(r.lastProblemID)
+	}
+	if r.width > 0 && r.height > 0 {
+		m, _ = m.Update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+	}
+	r.stack.replaceCurrent(m)
 }

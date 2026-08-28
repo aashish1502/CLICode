@@ -2,14 +2,16 @@ package models
 
 import (
 	"fmt"
+	"log"
 	"runtime"
+	"sort"
 	"strings"
 )
 
 type Example struct {
 	Input       string `json:"input"`
 	Output      string `json:"output"`
-	Explanition string `json:"explanition"`
+	Explanation string `json:"explanation"`
 }
 type TestCase struct {
 	Input          string `json:"input"`
@@ -39,28 +41,70 @@ type Problem struct {
 	Submissions []Submission      `json:"submissions"`
 }
 
-func (p *Problem) ValidateProblem() error {
-
-	pc, _, _, ok := runtime.Caller(1)
-	callerName := "IDK man something worse has happened i cannot read the stack"
-
-	if ok {
-		callerName = runtime.FuncForPC(pc).Name()
-	}
-
-	if p.ID == 0 || p.Description == "" || p.Title == "" || len(p.TestCases) == 0 || len(p.Examples) == 0 || p.Examples == nil || len(p.Constraints) == 0 {
-		return fmt.Errorf("problem struct either failed to read the API or the problem API fetched incomplete payload %v", callerName)
-	}
-
-	return nil
-
+// ValidationError reports which required fields a problem payload is missing.
+// The message is safe to show in the UI; the caller that triggered the failure
+// is written to the log instead, so it can be traced without a debugger.
+type ValidationError struct {
+	ID      int
+	Missing []string
 }
 
-func (p *Problem) FormatProblemFromProblemStruct() (string, error) {
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("problem %d is incomplete: missing %s", e.ID, strings.Join(e.Missing, ", "))
+}
 
+// ValidateProblem checks that a problem carries everything the screens need to
+// render it. A failure means the payload was truncated or the fetch failed, not
+// that the user did anything wrong.
+//
+// The immediate caller is recorded in clicode.log so a validation failure can be
+// traced back to its origin from the log alone.
+func (p *Problem) ValidateProblem() error {
+	var missing []string
+
+	if p.ID == 0 {
+		missing = append(missing, "id")
+	}
+	if p.Title == "" {
+		missing = append(missing, "title")
+	}
+	if p.Description == "" {
+		missing = append(missing, "description")
+	}
+	if len(p.Examples) == 0 {
+		missing = append(missing, "examples")
+	}
+	if len(p.Constraints) == 0 {
+		missing = append(missing, "constraints")
+	}
+	if len(p.TestCases) == 0 {
+		missing = append(missing, "testCases")
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	log.Printf("validation failed for problem %d: missing %s (called from %s)",
+		p.ID, strings.Join(missing, ", "), callerName(2))
+
+	return &ValidationError{ID: p.ID, Missing: missing}
+}
+
+// callerName resolves the function skip levels up the stack, for log context.
+func callerName(skip int) string {
+	pc, _, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown caller (stack unreadable)"
+	}
+	return fmt.Sprintf("%s:%d", runtime.FuncForPC(pc).Name(), line)
+}
+
+// Format renders a problem as the plain text shown in the description pane.
+// It never fails: a problem that is missing pieces renders the pieces it has.
+// Call ValidateProblem separately when completeness actually matters.
+func (p *Problem) Format() string {
 	var sb strings.Builder
-
-	var err error = p.ValidateProblem()
 
 	sb.WriteString(fmt.Sprintf("%v %s [%s] \n", p.ID, p.Title, p.Difficulty))
 	sb.WriteString(fmt.Sprintf("Platform: %s\n\n", p.Platform))
@@ -69,8 +113,8 @@ func (p *Problem) FormatProblemFromProblemStruct() (string, error) {
 	for _, t := range p.Examples {
 		sb.WriteString(fmt.Sprintf("  - %v\n", t.Input))
 		sb.WriteString(fmt.Sprintf("  - %v\n", t.Output))
-		if len(t.Explanition) != 0 {
-			sb.WriteString(fmt.Sprintf(" - %v\n", t.Explanition))
+		if len(t.Explanation) != 0 {
+			sb.WriteString(fmt.Sprintf(" - %v\n", t.Explanation))
 		}
 	}
 
@@ -84,8 +128,7 @@ func (p *Problem) FormatProblemFromProblemStruct() (string, error) {
 		sb.WriteString(fmt.Sprintf("%v", strings.Join(p.Tags, ", ")))
 	}
 
-	return sb.String(), err
-
+	return sb.String()
 }
 
 func (p *Problem) FormatTestCase(index int) string {
@@ -102,18 +145,21 @@ func (p *Problem) FormatTestCase(index int) string {
 	return sb.String()
 }
 
-func (p *Problem) GetCodeStub(language string) string {
-
-	if stub, ok := p.CodeStubs[language]; ok {
-		return stub
-	}
-
-	// Return available languages for error message
-	available := make([]string, 0, len(p.CodeStubs))
+// AvailableLanguages lists the languages this problem ships a code stub for,
+// sorted so the UI cycles through them in a stable order. Not every problem
+// offers every language, so the UI should only present what comes back here.
+func (p *Problem) AvailableLanguages() []string {
+	langs := make([]string, 0, len(p.CodeStubs))
 	for lang := range p.CodeStubs {
-		available = append(available, lang)
+		langs = append(langs, lang)
 	}
+	sort.Strings(langs)
+	return langs
+}
 
-	return ""
-
+// GetCodeStub returns the starter code for a language. The bool reports whether
+// this problem actually has one — use AvailableLanguages to find out which do.
+func (p *Problem) GetCodeStub(language string) (string, bool) {
+	stub, ok := p.CodeStubs[language]
+	return stub, ok
 }

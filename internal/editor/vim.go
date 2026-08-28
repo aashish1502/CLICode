@@ -299,7 +299,9 @@ func (e VimEditor) Update(msg tea.Msg) (VimEditor, tea.Cmd) {
 
 func (e VimEditor) updateInsert(key tea.KeyMsg) (VimEditor, tea.Cmd) {
 	switch key.Type {
-	case tea.KeyEsc:
+	// ctrl+c leaves insert mode, as it does in vim. It must be handled here so
+	// that typing is never interrupted by the app-level back binding.
+	case tea.KeyEsc, tea.KeyCtrlC:
 		e.Mode = Normal
 		e = e.clampCol() // normal mode max col is one less
 	case tea.KeyEnter:

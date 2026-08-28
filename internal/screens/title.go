@@ -6,29 +6,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aashish1502/clicode/data"
 	"github.com/aashish1502/clicode/internal/design"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-const artPath = "data/art/current.txt"
+// userArtPath is where a user drops their own title art to override the one
+// built into the binary.
+const userArtPath = "art/current.txt"
 
 // titleTickMsg fires when the auto-advance timer expires.
 type titleTickMsg struct{}
 
 var (
 	artStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#eb650c"))
+			Foreground(lipgloss.Color("#eb650c"))
 
 	hintStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			Italic(true)
 )
 
-// TitleScreen displays ASCII art loaded from artPath, then transitions to the
-// problem list on any keypress or after a short timer.
-// The art itself lives entirely outside the binary — swap data/art/current.txt
-// to change what appears without recompiling.
+// TitleScreen displays ASCII art, then transitions to the problem list on any
+// keypress or after a short timer.
+//
+// The art stays swappable without recompiling: drop a file at
+// ~/.clicode/art/current.txt and it wins over the copy built into the binary.
 type TitleScreen struct {
 	art    string
 	width  int
@@ -43,18 +47,41 @@ func NewTitleScreen(width, height int) TitleScreen {
 	}
 }
 
-// loadArt reads the art file. Falls back to a minimal banner on any error so
-// the app always starts even if the file is missing or malformed.
+// loadArt resolves the title art, most specific source first: the user's own
+// file, then the copy embedded in the binary, then a compiled-in banner. Each
+// step falls through on any error, so the app always starts.
 func loadArt() string {
-	data, err := os.ReadFile(filepath.Clean(artPath))
+	if art, ok := clean(userArt()); ok {
+		return art
+	}
+	if raw, ok := data.Art(); ok {
+		if art, ok := clean(raw); ok {
+			return art
+		}
+	}
+	return fallbackArt()
+}
+
+// userArt reads ~/.clicode/art/current.txt, if it exists.
+func userArt() string {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return fallbackArt()
+		return ""
 	}
-	art := strings.TrimRight(string(data), "\n")
+	raw, err := os.ReadFile(filepath.Join(home, ".clicode", userArtPath))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// clean trims a candidate banner and reports whether anything is left of it.
+func clean(raw string) (string, bool) {
+	art := strings.TrimRight(raw, "\n")
 	if strings.TrimSpace(art) == "" {
-		return fallbackArt()
+		return "", false
 	}
-	return art
+	return art, true
 }
 
 func fallbackArt() string {

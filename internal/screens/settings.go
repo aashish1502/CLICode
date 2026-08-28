@@ -27,7 +27,7 @@ func (s SettingsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
-			return s, func() tea.Msg { return NavigateToMenuMsg{} }
+			return s, func() tea.Msg { return NavigateBackMsg{} }
 		}
 	}
 	return s, nil

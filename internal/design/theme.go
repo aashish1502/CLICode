@@ -8,8 +8,8 @@ var (
 		BorderForeground(lipgloss.Color("63"))
 
 	ActiveBorder = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#eb650c"))
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#eb650c"))
 
 	Title = lipgloss.NewStyle().
 		Bold(true).
@@ -23,22 +23,31 @@ var (
 		Bold(true)
 
 	ListCursor = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#eb650c")).
-		Bold(true)
+			Foreground(lipgloss.Color("#eb650c")).
+			Bold(true)
 
 	DifficultyEasy = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("82"))
+			Foreground(lipgloss.Color("82"))
 
 	DifficultyMedium = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214"))
+				Foreground(lipgloss.Color("214"))
 
 	DifficultyHard = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196"))
+			Foreground(lipgloss.Color("196"))
 
 	Solved = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("82"))
 
 	LastWorkedOn = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39")).
-		Bold(true)
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
+
+	// LanguageStubbed marks a language this problem ships starter code for.
+	// LanguageBare is every other selectable language — still selectable, just
+	// without a head start.
+	LanguageStubbed = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("82"))
+
+	LanguageBare = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250"))
 )

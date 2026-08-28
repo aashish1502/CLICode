@@ -49,6 +49,13 @@ func NewProblemListScreen(lastProblemID, width, height int) ProblemListScreen {
 
 func (s ProblemListScreen) Init() tea.Cmd { return nil }
 
+// Refresh updates the last-worked-on marker without resetting the cursor or
+// scroll, so the list can be reused from the stack rather than rebuilt.
+func (s ProblemListScreen) Refresh(lastProblemID int) tea.Model {
+	s.lastProblemID = lastProblemID
+	return s
+}
+
 func (s ProblemListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -58,8 +65,8 @@ func (s ProblemListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			return s, tea.Quit
+		case "ctrl+c", "q", "esc":
+			return s, func() tea.Msg { return NavigateBackMsg{} }
 
 		case "j", "down":
 			if s.cursor < len(s.problems)-1 {

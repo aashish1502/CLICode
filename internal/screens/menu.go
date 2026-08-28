@@ -52,6 +52,13 @@ func NewMenuScreen(lastProblemID, width, height int) MenuScreen {
 
 func (s MenuScreen) Init() tea.Cmd { return nil }
 
+// Refresh updates the last-worked-on marker without disturbing the cursor, so
+// the menu can be reused from the stack instead of rebuilt on every visit.
+func (s MenuScreen) Refresh(lastProblemID int) tea.Model {
+	s.lastProblemID = lastProblemID
+	return s
+}
+
 func (s MenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -61,8 +68,8 @@ func (s MenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c":
-			return s, tea.Quit
+		case "ctrl+c", "esc":
+			return s, func() tea.Msg { return NavigateBackMsg{} }
 
 		case "j", "down":
 			if s.cursor < int(menuQuit) {
@@ -155,7 +162,7 @@ func (s MenuScreen) View() string {
 	box := menuBox.Render(strings.Join(rows, "\n"))
 
 	title := design.Title.Render("CLICode")
-	help := design.Help.Render("j/k: navigate  Enter: select")
+	help := design.Help.Render("j/k: navigate  Enter: select  ctrl+q: quit")
 
 	block := lipgloss.JoinVertical(lipgloss.Center,
 		title,
