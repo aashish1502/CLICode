@@ -163,3 +163,6 @@ clicode/
 
 - Inspired by terminal-first tools like `lazygit` and `k9s`
 - Built to scratch the itch of doing LeetCode without leaving the terminal
+
+
+this is a random string to test something
