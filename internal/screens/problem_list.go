@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/aashish1502/clicode/internal/design"
-	"github.com/aashish1502/clicode/internal/loader"
 	"github.com/aashish1502/clicode/internal/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,16 +19,17 @@ type ProblemListScreen struct {
 	err           error
 }
 
-func NewProblemListScreen(lastProblemID, width, height int) ProblemListScreen {
+// NewProblemListScreen renders a list the router has already fetched. The
+// screen does no I/O of its own -- it is handed the items and any error the
+// catalog returned.
+func NewProblemListScreen(problems []models.ProblemListItem, err error, lastProblemID, width, height int) ProblemListScreen {
 	s := ProblemListScreen{
 		lastProblemID: lastProblemID,
 		width:         width,
 		height:        height,
+		err:           err,
 	}
-
-	problems, err := loader.MakeProblemList()
 	if err != nil {
-		s.err = err
 		return s
 	}
 	s.problems = problems

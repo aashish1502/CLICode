@@ -6,13 +6,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// newTestRouter builds a router with HOME pointed at a temp dir, so loading and
-// saving session state never touches the real ~/.clicode.
+// newTestRouter builds a router with HOME pointed at a temp dir, so the
+// database it opens and seeds never touches the real ~/.clicode.
 func newTestRouter(t *testing.T) Router {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 
 	r := NewRouter()
+	t.Cleanup(func() { r.Close() })
 	m, _ := r.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m.(Router)
 }
@@ -189,5 +190,92 @@ func TestRevealedScreenGetsTheCurrentSize(t *testing.T) {
 	}
 	if menu.width != 120 {
 		t.Errorf("revealed menu width = %d, want 120", menu.width)
+	}
+}
+
+// ── persistence ──────────────────────────────────────────────────────────────
+
+// The whole point of step 2: what you type survives leaving the screen.
+func TestSavedSolutionIsRestoredWhenTheProblemIsReopened(t *testing.T) {
+	r := newTestRouter(t)
+
+	r, _ = send(t, r, NavigateToProblemMsg{ProblemID: 1})
+	r, cmd := send(t, r, SaveSolutionMsg{ProblemID: 1, Language: "kotlin", Code: "fun solve() {}"})
+	if cmd == nil {
+		t.Fatal("SaveSolutionMsg produced no command; nothing was written")
+	}
+	if saved, ok := cmd().(SolutionSavedMsg); !ok || saved.Err != nil {
+		t.Fatalf("save failed: %+v", saved)
+	}
+
+	// Walk away far enough that the screen is dropped from the cache, so the
+	// buffer can only come back from the database.
+	r, _ = send(t, r, NavigateToMenuMsg{})
+	for i := 100; i < 110; i++ {
+		r, _ = send(t, r, NavigateToProblemMsg{ProblemID: i})
+	}
+	r, _ = send(t, r, NavigateToMenuMsg{})
+	r, _ = send(t, r, NavigateToProblemMsg{ProblemID: 1})
+
+	s, ok := visible(t, r).(ProblemScreen)
+	if !ok {
+		t.Fatalf("visible screen is %T, want ProblemScreen", visible(t, r))
+	}
+	if got := s.langEdits["kotlin"]; got != "fun solve() {}" {
+		t.Errorf("restored kotlin buffer = %q, want the saved code", got)
+	}
+}
+
+// Saving records the language, and reopening returns to it -- even though
+// kotlin is not the configured default and ships no starter code.
+func TestProblemReopensInTheLanguageItWasLastSavedIn(t *testing.T) {
+	r := newTestRouter(t)
+
+	r, _ = send(t, r, NavigateToProblemMsg{ProblemID: 1})
+	_, cmd := send(t, r, SaveSolutionMsg{ProblemID: 1, Language: "kotlin", Code: "fun solve() {}"})
+	cmd()
+
+	r2 := newRouterSharingHome(t)
+	r2, _ = send(t, r2, NavigateToProblemMsg{ProblemID: 1})
+
+	s := visible(t, r2).(ProblemScreen)
+	if s.language != "kotlin" {
+		t.Errorf("reopened in %q, want kotlin (the last language saved)", s.language)
+	}
+}
+
+// A fresh Router over the same HOME -- the closest thing to restarting the app.
+func newRouterSharingHome(t *testing.T) Router {
+	t.Helper()
+	r := NewRouter()
+	t.Cleanup(func() { r.Close() })
+	m, _ := r.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return m.(Router)
+}
+
+// "Continue where you left off" now comes from the progress table.
+func TestLastOpenedSurvivesARestart(t *testing.T) {
+	r := newTestRouter(t)
+	r, _ = send(t, r, NavigateToProblemMsg{ProblemID: 3})
+
+	restarted := newRouterSharingHome(t)
+	if restarted.lastProblemID != 3 {
+		t.Errorf("lastProblemID after restart = %d, want 3", restarted.lastProblemID)
+	}
+}
+
+func TestProblemListComesFromTheCatalog(t *testing.T) {
+	r := newTestRouter(t)
+	r, _ = send(t, r, NavigateToProblemListMsg{})
+
+	s, ok := visible(t, r).(ProblemListScreen)
+	if !ok {
+		t.Fatalf("visible screen is %T, want ProblemListScreen", visible(t, r))
+	}
+	if s.err != nil {
+		t.Fatalf("list screen carries an error: %v", s.err)
+	}
+	if len(s.problems) == 0 {
+		t.Error("the catalog returned no problems; seeding did not run")
 	}
 }

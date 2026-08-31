@@ -588,9 +588,226 @@ screen picking up a size change it missed.
 `Fresh` mode has no user yet. It exists because the alternative — discovering it
 is needed later and retrofitting it — is worse, and it costs four lines.
 
-### Open question
+### Open question — resolved in step 2
 
-`callerName`'s `skip: 2` is correct only because of where the function currently
-sits, and nothing enforces that. Inlining it back into `ValidateProblem` with
-`runtime.Caller(1)` keeps the line number and the typed error while removing the
-frame-counting footgun. Awaiting a decision.
+`callerName`'s `skip: 2` was correct only because of where the function sat, and
+nothing enforced that. **Decision: inline it.** Done at the top of step 2 below.
+
+---
+
+## Step 2a — the SQLite store
+
+Adds `internal/store`: a local SQLite database holding the problem catalog and
+the user's work on it. **Nothing imports it yet** — no screen, no router. The
+app builds and behaves exactly as before. Wiring is step 2b.
+
+### `internal/models/problems.go`
+
+**Removed**
+
+- `func callerName(skip int) string` — deleted. The `skip` argument encoded
+  "there is exactly one helper frame between `runtime.Caller` and the frame you
+  want", which was true only by accident of layout and would have gone silently
+  wrong if the call were ever wrapped or moved. Nothing else called it.
+
+**Edited**
+
+- `ValidateProblem` — the `callerName(2)` call becomes an inline
+  `runtime.Caller(1)`. Same log line, same `*ValidationError` returned to the
+  UI. `runtime.Caller(1)` written directly in the function means "my caller"
+  regardless of where the function moves.
+
+**Unchanged** — every other function in the file, and the error type.
+
+### `go.mod` / `go.sum`
+
+**Added**
+
+- `modernc.org/sqlite v1.57.0` — SQLite transpiled from C to Go, so no CGO. A
+  `go install`ed binary still cross-compiles and still needs no C toolchain.
+  Pulls `modernc.org/libc`, `mathutil`, `memory`, `go-strftime`, `bigfft`,
+  `uuid`, all indirect.
+
+**Edited**
+
+- `go 1.24.2` → `go 1.25.0`, and the `toolchain go1.24.4` line was dropped.
+  Not a choice — `modernc.org/sqlite@v1.57.0` declares `go 1.25.0` and the
+  directive is raised to match. **This raises the minimum Go version for anyone
+  building clicode.** `modernc.org/sqlite@v1.39.0` only needs go 1.23 if that
+  matters; see the note at the end.
+
+### `internal/store/migrations/0001_init.sql` — new, 125 lines
+
+The schema. Nine tables in two groups, and the split is the point:
+
+| Group | Tables | Owner | On refresh |
+|---|---|---|---|
+| Content | `problems`, `problem_tags`, `examples`, `problem_constraints`, `test_cases`, `code_stubs` | catalog (seed now, API later) | replaced wholesale |
+| Local | `solutions`, `progress`, `submissions` | the user | never touched |
+
+Decisions worth arguing with:
+
+- **Every table is `STRICT`.** SQLite's default is type *affinity* — an
+  `INTEGER` column will accept the string `'hello'`. `STRICT` makes the declared
+  type a real constraint, the way H2 or Postgres behaves.
+- **Local tables have no foreign key to `problems`.** Deliberate. With
+  `ON DELETE CASCADE`, a problem withdrawn upstream would take the user's saved
+  code with it. An orphaned `solutions` row is a much better outcome than a
+  deleted one. Content children *do* cascade, because they are meaningless
+  without their parent.
+- **`ord` on every child table.** JSON arrays are ordered, SQL rows are not.
+  Without it, examples and constraints come back in whatever order the planner
+  picks.
+- **`problem_constraints`, not `constraints`.** `CONSTRAINT` is a SQL keyword
+  and the plural is close enough to be a trap in a hand-written query.
+- **`submissions.timestamp` stays `TEXT`.** That is what the payload carries and
+  nothing parses it. It earns a sortable column via a later migration when
+  submissions become real — which is what migrations are for.
+- **No `lastProblemID` column anywhere.** It is a query:
+  `ORDER BY last_opened_at DESC LIMIT 1`. Storing it separately is what let
+  `session.json` drift out of step with the rest of the progress data.
+
+### `internal/store/migrate.go` — new, ~100 lines
+
+Version lives in SQLite's built-in `PRAGMA user_version`, not a table of our
+own — so a brand new database reports `0` with no bootstrapping problem.
+Migrations are `//go:embed`ed `.sql` files; the Nth file in sorted order is
+version N. Each runs in a transaction *together with* its version bump, so a
+failure part-way leaves the database at the previous version rather than
+half-upgraded. A database claiming a version this build does not know is
+refused rather than run against.
+
+### `internal/store/store.go` — new, ~140 lines
+
+`Store` interface + `DB` implementation + `Open`.
+
+- **Interface, not just a struct**, so screens can be handed a fake in step 2b's
+  tests without a database on disk. `var _ Store = (*DB)(nil)` enforces it.
+- `foreign_keys(1)` is set in the DSN. It is **off by default in SQLite and is
+  per-connection** — without it every `ON DELETE CASCADE` in the schema is inert.
+- `SetMaxOpenConns(1)`. Single-user TUI, nothing to gain from a pool, and it
+  makes "database is locked" structurally impossible. Also required for
+  `:memory:`, where a second connection would get its own empty database.
+- `restrict()` chmods the db and its `-wal`/`-shm` sidecars to `0600` after
+  creation. SQLite creates them `0644` and does not ask. The `0700` directory is
+  the real protection; this matches the `0600` that `config.json` and
+  `session.json` are already written with, so everything in `~/.clicode` is
+  consistent. (`config.AuthToken` is declared but unused until step 7 — the
+  mode is about the user's own solutions today, and about the token later.)
+  Failures are ignored — a mode we could not tighten is not a reason to refuse
+  to start.
+
+### `internal/store/content.go` — new, ~300 lines
+
+`PutProblem`, `PutListItem`, `List`, `Problem`, `Count`.
+
+- `PutProblem` deletes and reinserts child rows rather than diffing them: an
+  example removed upstream has to disappear locally. Note what is *not* in the
+  function — `solutions`, `progress`. The refresh path cannot reach them.
+- `PutListItem` writes `url` and the content fields, then writes seed progress
+  with `ON CONFLICT DO NOTHING`. Seed values show on a fresh install and never
+  overwrite work the user has actually done.
+- `List` reads eleven columns and a tag join, not whole documents. This is what
+  replaces `data/problems/problems_list.json` — the denormalized index file that
+  only existed because JSON cannot be read a field at a time.
+
+### `internal/store/local.go` — new, ~90 lines
+
+`Solution`, `SaveSolution`, `MarkOpened`, `LastOpened`.
+
+- `SaveSolution` is one statement, so a save either lands or does not. This is
+  what makes `:w` possible; the rewrite-the-whole-JSON-file alternative has a
+  window where the file holds half a solution.
+- `Solution` returns `(string, bool, error)`. The bool separates "never saved"
+  from "saved an empty buffer" — the caller needs the difference to decide
+  between restoring a solution and loading the code stub.
+- `MarkOpened` with an empty language keeps the previously recorded one, so
+  opening a problem before a language is chosen does not blank the choice.
+
+### `internal/store/seed.go` — new, ~95 lines
+
+Populates an empty catalog from `data.Problems()`. No-op once the catalog has
+anything in it, so it runs on first launch and gets out of the way — re-seeding
+every start would fight with catalog refreshes later.
+
+Unlike `loader.LoadProblem`, a seed problem that fails validation is **not**
+rejected: it is stored and rendered as best it can be. Rejecting here would make
+a problem vanish from a catalog its own index file says exists. A missing or
+malformed detail file is logged and skipped; the problem still lists.
+
+### `internal/store/store_test.go` — new, 18 tests
+
+The ones that pin down the design rather than the plumbing:
+
+- `TestContentRefreshLeavesLocalStateAlone` — the whole reason for the split.
+  Saves a solution, refreshes the problem with changed content, asserts the
+  content updated *and* the code survived.
+- `TestForeignKeysCascadeContentButNotSolutions` — deletes a problem outright;
+  examples cascade away, the solution stays.
+- `TestSeedingDoesNotOverwriteRealProgress` — re-seeds over edited progress.
+- `TestStrictTablesRejectTheWrongType` — fails if `STRICT` is ever dropped.
+- `TestMigrateIsIdempotent`, `TestDatabaseFromANewerBuildIsRejected`.
+- `TestSolutionDistinguishesEmptyFromAbsent`.
+- `TestDatabaseFileIsNotWorldReadable`.
+
+### Unchanged
+
+`internal/session` still works and is still what the router uses. `loader`,
+`screens`, `catalog`-to-be, and every screen file are untouched. Deleting
+`session` happens in 2b, at the cutover.
+
+### Verification
+
+`go vet ./...`, `gofmt -l .`, `go test ./...` all clean. Seeded a real database
+from the embedded set: 11 problems, problem 1 came back with 3 examples,
+4 constraints, 3 test cases, 3 stubs and its explanation text intact; a solution
+saved in Kotlin and re-read after closing and reopening the process; file mode
+`0600`, directory `0700`.
+
+### Note — the Go version bump
+
+`modernc.org/sqlite@v1.57.0` requires `go 1.25.0`, which raised the module's `go`
+directive from `1.24.2`. Anyone on Go 1.24 can no longer build clicode. If that
+is unwanted, `modernc.org/sqlite@v1.39.0` declares `go 1.23.0` and would leave
+the directive alone. Say the word and it is a one-line `go get`.
+
+---
+
+## Step 2b — wiring it up
+
+The code is in the diff; this records only the decisions the diff cannot show.
+
+**Screens still do no I/O.** `:w` emits a `SaveSolutionMsg`; the router writes and
+replies with a `SolutionSavedMsg`. This is the same shape navigation already
+used, and it is what will let a slow network write become an async command in
+step 7 without touching a screen.
+
+**Saving stayed synchronous inside the router.** The original plan said every
+catalog call should return a `tea.Cmd` from the start. SQLite reads are
+microseconds, so blocking `Update` on them is invisible, and converting every
+screen now would have made this diff much harder to read. The message plumbing
+above is the part that had to exist early; the async conversion is a step of its
+own, worth doing when there is real latency to hide.
+
+**A broken database is not a fatal error.** `catalog.Open` never fails — if the
+store will not open it degrades to `seedOnly`, serving the embedded JSON
+read-only. `Writable()` reports which mode is live so `:w` can say "cannot
+write" rather than silently dropping the buffer.
+
+**`lastProblemID` is derived, not stored.** `session.json` is gone and
+`internal/session` is deleted. "Continue" reads the most recent
+`progress.last_opened_at`. Existing `~/.clicode/session.json` files are simply
+ignored — the value is regenerated the first time a problem is opened, so there
+is nothing to migrate.
+
+**`NewProblemScreen` takes a struct now.** Adding saved buffers and a writable
+flag pushed it to eight positional parameters, two of them a bare `map` and
+`bool` at the end. `ProblemArgs` makes the call sites readable and the
+transposable arguments named.
+
+**Bug found while wiring: work could be stranded.** `languageSet()` was
+`supported ∪ stubbed`. Save a solution in a language, then narrow the configured
+set, and that buffer became unreachable — the picker would not list it. It is
+now `supported ∪ stubbed ∪ saved`. Caught by
+`TestProblemReopensInTheLanguageItWasLastSavedIn` failing during the cutover,
+covered permanently by `TestALanguageWithSavedWorkIsAlwaysSelectable`.

@@ -3,6 +3,7 @@ package screens
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/aashish1502/clicode/internal/design"
@@ -48,23 +49,65 @@ type ProblemScreen struct {
 	cmdMode bool
 	cmdBuf  string
 
+	// status is the transient line shown after a command -- "written", or why
+	// it could not be. Cleared on the next keypress.
+	status string
+
+	// writable is false when the catalog has no database behind it, so ":w"
+	// can say so instead of appearing to work.
+	writable bool
+
 	// picker is the modal language list, opened with ctrl+l.
 	picker languagePicker
 }
 
-func NewProblemScreen(problem *models.Problem, err error, width, height int, language string, supported []languages.Language) ProblemScreen {
+// ProblemArgs is everything the router hands a problem screen.
+//
+// A struct rather than positional parameters: the list grew past the point
+// where NewProblemScreen(p, nil, 80, 24, "python", langs, nil, true) told a
+// reader anything, and the two trailing values are exactly the kind that get
+// silently transposed.
+type ProblemArgs struct {
+	Problem *models.Problem
+	// Err is whatever the catalog returned when loading Problem. Non-nil means
+	// the screen renders an error card instead of the split pane.
+	Err           error
+	Width, Height int
+
+	// Language is the buffer to open in: the problem's last-used language when
+	// there is one, otherwise the configured default.
+	Language string
+	// Supported is the set the judge accepts -- deliberately not limited to the
+	// languages this problem ships starter code for.
+	Supported []languages.Language
+
+	// Saved holds buffers already persisted for this problem, keyed by
+	// language. They take precedence over the code stub, so reopening returns
+	// the user to their own work rather than starting over.
+	Saved map[string]string
+
+	// Writable is false when the catalog has no database behind it, so ":w"
+	// can say so rather than appearing to work.
+	Writable bool
+}
+
+func NewProblemScreen(a ProblemArgs) ProblemScreen {
 	s := ProblemScreen{
 		activePane: problemPane,
 		langEdits:  make(map[string]string),
-		width:      width,
-		height:     height,
-		err:        err,
-		problem:    problem,
-		supported:  supported,
+		width:      a.Width,
+		height:     a.Height,
+		err:        a.Err,
+		problem:    a.Problem,
+		supported:  a.Supported,
+		writable:   a.Writable,
 	}
-	s.language = s.initialLanguage(language)
+	for lang, code := range a.Saved {
+		s.langEdits[lang] = code
+	}
+	s.language = s.initialLanguage(a.Language)
 
-	if width > 0 && height > 0 && err == nil && problem != nil {
+	if a.Width > 0 && a.Height > 0 && a.Err == nil && a.Problem != nil {
 		s = s.initViewports()
 	}
 
@@ -132,14 +175,30 @@ func (s ProblemScreen) stubForLang(lang string) string {
 // of. It is never narrowed to the stubbed set — a judge that takes Kotlin takes
 // it whether or not this problem has Kotlin starter code.
 func (s ProblemScreen) languageSet() []languages.Language {
-	supported := s.supported
-	if len(supported) == 0 {
-		supported, _ = languages.NewStatic(nil).Supported(context.Background())
+	set := s.supported
+	if len(set) == 0 {
+		set, _ = languages.NewStatic(nil).Supported(context.Background())
 	}
-	if s.problem == nil {
-		return supported
+	if s.problem != nil {
+		set = languages.Union(set, s.problem.AvailableLanguages())
 	}
-	return languages.Union(supported, s.problem.AvailableLanguages())
+
+	// Anything the user already has a buffer in belongs in the list even if the
+	// configured set no longer contains it. Otherwise saving a solution in a
+	// language and then narrowing config would strand that work somewhere the
+	// picker cannot reach.
+	return languages.Union(set, s.savedLanguages())
+}
+
+// savedLanguages is the languages this problem has a buffer for, sorted so the
+// list stays stable between renders.
+func (s ProblemScreen) savedLanguages() []string {
+	ids := make([]string, 0, len(s.langEdits))
+	for id := range s.langEdits {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // setLanguage swaps the buffer to another language, stashing the current one's
@@ -171,10 +230,41 @@ func (s ProblemScreen) runCmd(cmd string) (ProblemScreen, tea.Cmd) {
 	switch cmd {
 	case "q", "q!":
 		return s, func() tea.Msg { return NavigateToMenuMsg{} }
-	case "w":
-		// future: save to disk
+	case "w", "wq", "x":
+		saved, save := s.save()
+		if cmd == "w" {
+			return saved, save
+		}
+		// :wq and :x -- write, then leave. Both commands are sequenced so the
+		// save is issued before the navigation.
+		return saved, tea.Batch(save, func() tea.Msg { return NavigateBackMsg{} })
 	}
+	s.status = "not an editor command: :" + cmd
 	return s, nil
+}
+
+// save emits a write for the current buffer. The router does the writing --
+// this screen never touches the database.
+func (s ProblemScreen) save() (ProblemScreen, tea.Cmd) {
+	if s.problem == nil {
+		s.status = "nothing to write"
+		return s, nil
+	}
+	if !s.writable {
+		s.status = "cannot write: no database (see clicode.log)"
+		return s, nil
+	}
+
+	// Keep the in-memory copy in step with what was sent, so switching
+	// language and back shows the same text even before the write lands.
+	code := s.codeEditor.Value()
+	s.langEdits[s.language] = code
+	s.status = "writing..."
+
+	id, lang := s.problem.ID, s.language
+	return s, func() tea.Msg {
+		return SaveSolutionMsg{ProblemID: id, Language: lang, Code: code}
+	}
 }
 
 func (s ProblemScreen) Init() tea.Cmd { return nil }
@@ -197,7 +287,19 @@ func (s ProblemScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return s, nil
 
+	case SolutionSavedMsg:
+		if msg.Err != nil {
+			s.status = "write failed: " + msg.Err.Error()
+		} else {
+			s.status = fmt.Sprintf("written (%s)", msg.Language)
+		}
+		return s, nil
+
 	case tea.KeyMsg:
+		// A keypress means the user has moved on; the previous result has been
+		// read or is no longer relevant.
+		s.status = ""
+
 		// ── Language picker — modal, swallows every key while open ────────────
 		if s.picker.open {
 			var chosen string
@@ -331,6 +433,8 @@ func (s ProblemScreen) View() string {
 	var bottomBar string
 	if s.cmdMode {
 		bottomBar = cmdPrompt.Render(":") + cmdStyle.Render(s.cmdBuf)
+	} else if s.status != "" {
+		bottomBar = design.Help.Render(s.status)
 	} else if s.activePane == editorPane {
 		bottomBar = s.codeEditor.ModeString()
 	} else {

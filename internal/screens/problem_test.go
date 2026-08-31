@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -45,7 +46,7 @@ func languageIDs(s ProblemScreen) []string {
 // selectable set from the stubs made a Kotlin-capable judge unreachable.
 func TestLanguageSetIsNotLimitedToStubs(t *testing.T) {
 	p := problemWithStubs("python")
-	s := NewProblemScreen(p, nil, 80, 24, "python", supported("python", "go", "kotlin"))
+	s := NewProblemScreen(ProblemArgs{Problem: p, Width: 80, Height: 24, Language: "python", Supported: supported("python", "go", "kotlin"), Writable: true})
 
 	got := languageIDs(s)
 	for _, want := range []string{"python", "go", "kotlin"} {
@@ -58,7 +59,7 @@ func TestLanguageSetIsNotLimitedToStubs(t *testing.T) {
 // A stub for a language the catalog has never heard of must not be dropped.
 func TestLanguageSetIncludesUnknownStubbedLanguage(t *testing.T) {
 	p := problemWithStubs("python", "fortran")
-	s := NewProblemScreen(p, nil, 80, 24, "python", supported("python", "go"))
+	s := NewProblemScreen(ProblemArgs{Problem: p, Width: 80, Height: 24, Language: "python", Supported: supported("python", "go"), Writable: true})
 
 	if got := languageIDs(s); !contains(got, "fortran") {
 		t.Errorf("stubbed language dropped; got %v", got)
@@ -91,7 +92,7 @@ func press(t *testing.T, s ProblemScreen, k string) ProblemScreen {
 }
 
 func TestCtrlLOpensThePicker(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", supported("python", "go"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go"), Writable: true})
 
 	if s.picker.open {
 		t.Fatal("picker starts open")
@@ -104,7 +105,7 @@ func TestCtrlLOpensThePicker(t *testing.T) {
 // The picker lists everything selectable, not just the stubbed languages, and
 // knows which is which so it can colour them.
 func TestPickerListsEverySelectableLanguage(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", supported("python", "go", "kotlin"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go", "kotlin"), Writable: true})
 	s = press(t, s, "ctrl+l")
 
 	if got := languages.IDs(s.picker.langs); len(got) != 3 {
@@ -119,7 +120,7 @@ func TestPickerListsEverySelectableLanguage(t *testing.T) {
 }
 
 func TestPickerOpensOnTheCurrentLanguage(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "go", supported("python", "go", "kotlin"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "go", Supported: supported("python", "go", "kotlin"), Writable: true})
 	s = press(t, s, "ctrl+l")
 
 	if got := s.picker.langs[s.picker.cursor].ID; got != "go" {
@@ -130,7 +131,7 @@ func TestPickerOpensOnTheCurrentLanguage(t *testing.T) {
 // Selecting a language with no starter code must work — that is the whole point
 // of not deriving the list from the stubs.
 func TestPickerSelectsAnUnstubbedLanguage(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", supported("python", "go", "kotlin"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go", "kotlin"), Writable: true})
 
 	s = press(t, s, "ctrl+l")
 	s = press(t, s, "j")
@@ -146,7 +147,7 @@ func TestPickerSelectsAnUnstubbedLanguage(t *testing.T) {
 }
 
 func TestPickerCancelKeepsCurrentLanguage(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", supported("python", "go"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go"), Writable: true})
 
 	s = press(t, s, "ctrl+l")
 	s = press(t, s, "j")
@@ -162,7 +163,7 @@ func TestPickerCancelKeepsCurrentLanguage(t *testing.T) {
 
 // Switching away and back must not lose what was typed.
 func TestSetLanguagePreservesEdits(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python", "go"), nil, 80, 24, "python", supported("python", "go"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python", "go"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go"), Writable: true})
 
 	s.codeEditor = s.codeEditor.SetValue("my python work")
 	s = s.setLanguage("go")
@@ -174,7 +175,7 @@ func TestSetLanguagePreservesEdits(t *testing.T) {
 }
 
 func TestPickerViewShowsEveryLanguageAndLegend(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", supported("python", "go", "kotlin"))
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Supported: supported("python", "go", "kotlin"), Writable: true})
 	s = press(t, s, "ctrl+l")
 
 	view := s.View()
@@ -189,7 +190,7 @@ func TestPickerViewShowsEveryLanguageAndLegend(t *testing.T) {
 // valid in that language rather than a bare "//".
 func TestStubForLangFallsBackPerLanguage(t *testing.T) {
 	p := problemWithStubs("go")
-	s := NewProblemScreen(p, nil, 80, 24, "go", supported("go", "python"))
+	s := NewProblemScreen(ProblemArgs{Problem: p, Width: 80, Height: 24, Language: "go", Supported: supported("go", "python"), Writable: true})
 
 	if got := s.stubForLang("go"); got != "stub for go" {
 		t.Errorf("go: got %q, want the real stub", got)
@@ -214,7 +215,7 @@ func TestInitialLanguage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewProblemScreen(problemWithStubs(tt.stubs...), nil, 80, 24, tt.preferred, supported(tt.supported...))
+			s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs(tt.stubs...), Width: 80, Height: 24, Language: tt.preferred, Supported: supported(tt.supported...), Writable: true})
 			if s.language != tt.want {
 				t.Errorf("language = %q, want %q", s.language, tt.want)
 			}
@@ -225,7 +226,7 @@ func TestInitialLanguage(t *testing.T) {
 // The router passes whatever config holds; an empty set must not leave the
 // editor with nothing to open.
 func TestEmptySupportedSetFallsBackToDefaults(t *testing.T) {
-	s := NewProblemScreen(problemWithStubs("python"), nil, 80, 24, "python", nil)
+	s := NewProblemScreen(ProblemArgs{Problem: problemWithStubs("python"), Width: 80, Height: 24, Language: "python", Writable: true})
 
 	if len(languageIDs(s)) == 0 {
 		t.Fatal("no languages available with an empty supported set")
@@ -239,4 +240,132 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// ── saved work ───────────────────────────────────────────────────────────────
+
+// A saved buffer wins over the problem's starter code: reopening a problem
+// returns the user to their own work.
+func TestSavedBufferIsOpenedInsteadOfTheStub(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python", "go"),
+		Saved:     map[string]string{"python": "my own code"},
+		Writable:  true,
+	})
+
+	if got := s.codeEditor.Value(); got != "my own code" {
+		t.Errorf("editor opened with %q, want the saved buffer", got)
+	}
+}
+
+// The gap found while wiring the router: a solution saved in a language the
+// configured set does not contain must still be reachable, or the work is
+// stranded where the picker cannot get to it.
+func TestALanguageWithSavedWorkIsAlwaysSelectable(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python", "go"), // no kotlin
+		Saved:     map[string]string{"kotlin": "fun solve() {}"},
+		Writable:  true,
+	})
+
+	if !contains(languageIDs(s), "kotlin") {
+		t.Errorf("languages = %v, want kotlin included because work is saved in it",
+			languageIDs(s))
+	}
+}
+
+func TestWriteCommandAsksTheRouterToSave(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python"),
+		Writable:  true,
+	})
+
+	s, cmd := s.runCmd("w")
+	if cmd == nil {
+		t.Fatal(":w produced no command")
+	}
+	msg, ok := cmd().(SaveSolutionMsg)
+	if !ok {
+		t.Fatalf(":w emitted %T, want SaveSolutionMsg", cmd())
+	}
+	if msg.ProblemID != 1 || msg.Language != "python" {
+		t.Errorf("save = problem %d in %q, want problem 1 in python", msg.ProblemID, msg.Language)
+	}
+	if msg.Code == "" {
+		t.Error("save carried an empty buffer")
+	}
+}
+
+// A read-only catalog must say so rather than letting a write look like it
+// worked.
+func TestWriteIsRefusedWithoutADatabase(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python"),
+		Writable:  false,
+	})
+
+	s, cmd := s.runCmd("w")
+	if cmd != nil {
+		t.Error(":w issued a write against a read-only catalog")
+	}
+	if s.status == "" {
+		t.Error(":w failed silently; the user was told nothing")
+	}
+}
+
+func TestSaveResultIsShownToTheUser(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python"),
+		Writable:  true,
+	})
+
+	updated, _ := s.Update(SolutionSavedMsg{Language: "python"})
+	if got := updated.(ProblemScreen).status; got == "" {
+		t.Error("a successful save reported nothing")
+	}
+
+	updated, _ = s.Update(SolutionSavedMsg{Language: "python", Err: errWriteFailed})
+	if got := updated.(ProblemScreen).status; got == "" {
+		t.Error("a failed save reported nothing")
+	}
+}
+
+var errWriteFailed = errors.New("disk on fire")
+
+// The status line is a response to the last command, not a permanent fixture.
+func TestStatusClearsOnTheNextKeypress(t *testing.T) {
+	s := NewProblemScreen(ProblemArgs{
+		Problem:   problemWithStubs("python"),
+		Width:     80,
+		Height:    24,
+		Language:  "python",
+		Supported: supported("python"),
+		Writable:  true,
+	})
+	s.status = "written (python)"
+
+	updated, _ := s.Update(key("j"))
+	if got := updated.(ProblemScreen).status; got != "" {
+		t.Errorf("status = %q after a keypress, want it cleared", got)
+	}
 }

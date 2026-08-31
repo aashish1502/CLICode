@@ -85,19 +85,18 @@ func (p *Problem) ValidateProblem() error {
 		return nil
 	}
 
+	// runtime.Caller(1) is the frame above this one: whoever called
+	// ValidateProblem. Written inline deliberately -- routing it through a
+	// helper would add a frame and make the skip count depend on where the
+	// helper sits, which nothing would catch if it drifted.
+	caller := "unknown caller (stack unreadable)"
+	if pc, _, line, ok := runtime.Caller(1); ok {
+		caller = fmt.Sprintf("%s:%d", runtime.FuncForPC(pc).Name(), line)
+	}
 	log.Printf("validation failed for problem %d: missing %s (called from %s)",
-		p.ID, strings.Join(missing, ", "), callerName(2))
+		p.ID, strings.Join(missing, ", "), caller)
 
 	return &ValidationError{ID: p.ID, Missing: missing}
-}
-
-// callerName resolves the function skip levels up the stack, for log context.
-func callerName(skip int) string {
-	pc, _, line, ok := runtime.Caller(skip)
-	if !ok {
-		return "unknown caller (stack unreadable)"
-	}
-	return fmt.Sprintf("%s:%d", runtime.FuncForPC(pc).Name(), line)
 }
 
 // Format renders a problem as the plain text shown in the description pane.
@@ -108,7 +107,7 @@ func (p *Problem) Format() string {
 
 	sb.WriteString(fmt.Sprintf("%v %s [%s] \n", p.ID, p.Title, p.Difficulty))
 	sb.WriteString(fmt.Sprintf("Platform: %s\n\n", p.Platform))
-	sb.WriteString(p.Description + "\n\n")
+	sb.WriteString(p.Description + " \n\n")
 
 	for _, t := range p.Examples {
 		sb.WriteString(fmt.Sprintf("  - %v\n", t.Input))

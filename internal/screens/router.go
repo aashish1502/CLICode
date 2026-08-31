@@ -5,10 +5,9 @@ import (
 	"log"
 	"strconv"
 
+	"github.com/aashish1502/clicode/internal/catalog"
 	"github.com/aashish1502/clicode/internal/config"
 	"github.com/aashish1502/clicode/internal/languages"
-	"github.com/aashish1502/clicode/internal/loader"
-	"github.com/aashish1502/clicode/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -44,6 +43,10 @@ type Router struct {
 	width         int
 	height        int
 
+	// data is the only way the router reaches problems or saved work. It is an
+	// interface so the store, and later the API, stay invisible to screens.
+	data catalog.Catalog
+
 	// supported is the set of languages the editor may open a buffer in,
 	// resolved once at startup. It is static today; when the API supplies it
 	// this becomes a refreshable snapshot rather than a constant.
@@ -51,8 +54,16 @@ type Router struct {
 }
 
 func NewRouter() Router {
-	sess, _ := session.Load()
 	cfg, _ := config.Load()
+	data := catalog.Open()
+
+	// "Continue where you left off" is now derived from the progress table --
+	// the most recently opened problem -- rather than a separately stored id
+	// that could disagree with it.
+	last, err := data.LastOpened(context.Background())
+	if err != nil {
+		log.Printf("could not read the last opened problem: %v", err)
+	}
 
 	supported, err := languages.NewStatic(cfg.Languages).Supported(context.Background())
 	if err != nil {
@@ -63,12 +74,22 @@ func NewRouter() Router {
 	}
 
 	r := Router{
-		lastProblemID: sess.LastProblemID,
+		lastProblemID: last,
 		cfg:           cfg,
 		supported:     supported,
+		data:          data,
 	}
 	r.stack.reset(Key{ID: titleScreenID}, NewTitleScreen(0, 0))
 	return r
+}
+
+// Close releases the catalog. Bubble Tea has no teardown hook, so main calls
+// this once the program loop has returned.
+func (r Router) Close() error {
+	if r.data == nil {
+		return nil
+	}
+	return r.data.Close()
 }
 
 func (r Router) Init() tea.Cmd {
@@ -105,17 +126,49 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NavigateToProblemListMsg:
 		return r.navigate(Key{ID: listScreenID}, Single, func() tea.Model {
-			return NewProblemListScreen(r.lastProblemID, r.width, r.height)
+			items, err := r.data.List(context.Background())
+			return NewProblemListScreen(items, err, r.lastProblemID, r.width, r.height)
 		})
 
 	case NavigateToProblemMsg:
 		r.lastProblemID = m.ProblemID
-		_ = session.Save(session.Session{LastProblemID: r.lastProblemID})
-
 		id := m.ProblemID
+
 		return r.navigate(Key{ID: problemScreenID, Arg: strconv.Itoa(id)}, Single, func() tea.Model {
-			problem, err := loader.LoadProblem(id)
-			return NewProblemScreen(problem, err, r.width, r.height, r.cfg.DefaultLanguage, r.supported)
+			ctx := context.Background()
+
+			problem, err := r.data.Problem(ctx, id)
+
+			// Reopen in the language this problem was last worked in, and with
+			// whatever was saved in each language. Both are best-effort: a
+			// failure here costs the convenience, not the problem.
+			language := r.cfg.DefaultLanguage
+			if last, lerr := r.data.LastLanguage(ctx, id); lerr != nil {
+				log.Printf("could not read the last language for problem %d: %v", id, lerr)
+			} else if last != "" {
+				language = last
+			}
+
+			saved, serr := r.data.Solutions(ctx, id)
+			if serr != nil {
+				log.Printf("could not read saved solutions for problem %d: %v", id, serr)
+				saved = nil
+			}
+
+			if merr := r.data.MarkOpened(ctx, id, ""); merr != nil {
+				log.Printf("could not record problem %d as opened: %v", id, merr)
+			}
+
+			return NewProblemScreen(ProblemArgs{
+				Problem:   problem,
+				Err:       err,
+				Width:     r.width,
+				Height:    r.height,
+				Language:  language,
+				Supported: r.supported,
+				Saved:     saved,
+				Writable:  r.data.Writable(),
+			})
 		})
 
 	case NavigateToTestCaseMsg:
@@ -128,6 +181,21 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r.navigate(Key{ID: settingsScreenID}, Single, func() tea.Model {
 			return NewSettingsScreen(r.width, r.height)
 		})
+
+	case SaveSolutionMsg:
+		// Screens stay pure: ":w" asks, the router writes, and the outcome
+		// comes back as a message the screen can render.
+		save := m
+		return r, func() tea.Msg {
+			ctx := context.Background()
+			err := r.data.SaveSolution(ctx, save.ProblemID, save.Language, save.Code)
+			if err != nil {
+				log.Printf("saving problem %d (%s): %v", save.ProblemID, save.Language, err)
+			} else if merr := r.data.MarkOpened(ctx, save.ProblemID, save.Language); merr != nil {
+				log.Printf("could not record the language for problem %d: %v", save.ProblemID, merr)
+			}
+			return SolutionSavedMsg{Language: save.Language, Err: err}
+		}
 
 	case NavigateBackMsg:
 		cmd, ok := r.stack.pop()

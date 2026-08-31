@@ -16,9 +16,19 @@ func main() {
 		log.SetOutput(logFile)
 	}
 
-	p := tea.NewProgram(screens.NewRouter(), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error running CLICode: %v\n", err)
+	router := screens.NewRouter()
+
+	p := tea.NewProgram(router, tea.WithAltScreen())
+	_, runErr := p.Run()
+
+	// Closed explicitly rather than with defer: os.Exit below would skip a
+	// deferred call, and the database should be released either way.
+	if err := router.Close(); err != nil {
+		log.Printf("closing the catalog: %v", err)
+	}
+
+	if runErr != nil {
+		fmt.Printf("Error running CLICode: %v\n", runErr)
 		os.Exit(1)
 	}
 }
